@@ -7,5 +7,8 @@ APP=LocalObserver.app
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/LocalObserver "$APP/Contents/MacOS/LocalObserver"
 cp packaging/Info.plist "$APP/Contents/Info.plist"
+# Agent icons live in the core module's resource bundle.
+rm -rf "$APP/Contents/Resources/LocalObserver_LocalObserverCore.bundle"
+cp -R .build/release/LocalObserver_LocalObserverCore.bundle "$APP/Contents/Resources/"
 codesign --force --sign - "$APP" >/dev/null 2>&1 || true
 echo "Built $APP — open it with: open $APP"

@@ -8,9 +8,20 @@ let package = Package(
         .executable(name: "LocalObserver", targets: ["LocalObserver"])
     ],
     targets: [
+        .target(
+            name: "LocalObserverCore",
+            path: "Sources/LocalObserverCore",
+            resources: [.process("Resources")]
+        ),
         .executableTarget(
             name: "LocalObserver",
+            dependencies: ["LocalObserverCore"],
             path: "Sources/LocalObserver"
+        ),
+        .executableTarget(
+            name: "LocalObserverVerification",
+            dependencies: ["LocalObserverCore"],
+            path: "Sources/LocalObserverVerification"
         )
     ]
 )

@@ -1,33 +1,47 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import LocalObserverCore
 
 struct ContentView: View {
     @ObservedObject var state: AppState
+    @ObservedObject var agentStore: AgentStore
     @State private var dropTargeted = false
     @State private var columns: NavigationSplitViewVisibility = .all
     @State private var windowWidth: CGFloat = 1200
     @State private var autoCollapsed = false
     @AppStorage("LocalObserver.inspectorWidth") private var inspectorWidth: Double = 340
 
-    private var inspecting: ServerEntry? { state.sidebar == .launchers ? nil : state.selected }
+    private var searchBinding: Binding<String> {
+        isAgentHub ? $agentStore.searchText : $state.searchText
+    }
+
+    private var isAgentHub: Bool { state.sidebar.isAgentPage }
+    private var inspectingServer: ServerEntry? { state.sidebar == .launchers || isAgentHub ? nil : state.selected }
+    private var inspectingAgent: AgentSession? { state.sidebar == .agentActivity ? agentStore.selectedSession : nil }
+    private var isInspecting: Bool { inspectingServer != nil || inspectingAgent != nil }
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columns) {
-            SidebarView(state: state)
+            SidebarView(state: state, agentStore: agentStore)
                 .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
         } detail: {
             HStack(spacing: 0) {
                 page
-                if let server = inspecting {
+                if let session = inspectingAgent {
+                    InspectorPanel(width: $inspectorWidth) {
+                        AgentInspectorView(store: agentStore, session: session)
+                    }
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                } else if let server = inspectingServer {
                     InspectorPanel(width: $inspectorWidth) {
                         InspectorView(state: state, server: server)
                     }
                     .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
-            .animation(.snappy(duration: 0.28), value: inspecting != nil)
+            .animation(.snappy(duration: 0.28), value: isInspecting)
         }
-        .searchable(text: $state.searchText, placement: .toolbar, prompt: "Search port, project, folder…")
+        .searchable(text: searchBinding, placement: .toolbar, prompt: isAgentHub ? "Search agent, project, model" : "Search port, project, folder…")
         .toolbar { toolbar }
         .navigationTitle(state.sidebar.title)
         .sheet(item: $state.draft) { draft in
@@ -35,7 +49,7 @@ struct ContentView: View {
         }
         .frame(minWidth: 760, minHeight: 540)
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { windowWidth = $0 }
-        .onChange(of: inspecting != nil) { _, open in
+        .onChange(of: isInspecting) { _, open in
             // Sidebar + page + inspector don't fit in a narrow window: tuck the sidebar away while inspecting.
             if open, windowWidth < 220 + 600 + inspectorWidth, columns != .detailOnly {
                 withAnimation(.snappy(duration: 0.28)) { columns = .detailOnly }
@@ -51,13 +65,19 @@ struct ContentView: View {
         Group {
             if state.sidebar == .launchers {
                 LaunchersPage(state: state)
+            } else if state.sidebar == .agentActivity {
+                AgentActivityPage(store: agentStore)
+            } else if state.sidebar == .agentUsage {
+                AgentUsagePage(store: agentStore)
+            } else if state.sidebar == .agentLimits {
+                AgentLimitsPage(store: agentStore)
             } else {
                 ServersPage(state: state)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(N.bg)
-        .overlay { if dropTargeted { DropOverlay() } }
+        .overlay { if !isAgentHub && dropTargeted { DropOverlay() } }
         .overlay(alignment: .bottom) {
             if let toast = state.toast {
                 ToastView(toast: toast,
@@ -69,6 +89,7 @@ struct ContentView: View {
             }
         }
         .dropDestination(for: URL.self) { urls, _ in
+            guard !isAgentHub else { return false }
             guard let folder = urls.first(where: \.hasDirectoryPath) ?? urls.first.map({ $0.deletingLastPathComponent() }) else { return false }
             state.draftLauncher(folder: folder.path)
             return true
@@ -81,9 +102,9 @@ struct ContentView: View {
     private var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
             Button {
-                state.refresh()
+                isAgentHub ? agentStore.refresh(forceLimits: state.sidebar == .agentLimits) : state.refresh()
             } label: {
-                if state.isScanning {
+                if isAgentHub ? agentStore.isScanning : state.isScanning {
                     ProgressView().controlSize(.small).frame(width: 16, height: 16)
                 } else {
                     Label("Refresh", systemImage: "arrow.clockwise")
@@ -91,12 +112,19 @@ struct ContentView: View {
             }
             .help("Refresh now (⌘R)")
 
-            Button {
-                state.draft = LauncherDraft()
-            } label: {
-                Label("New server", systemImage: "plus")
+            if isAgentHub {
+                SettingsLink {
+                    Label("Agent settings", systemImage: "gearshape")
+                }
+                .help("Choose which agents to watch (⌘,)")
+            } else {
+                Button {
+                    state.draft = LauncherDraft()
+                } label: {
+                    Label("New server", systemImage: "plus")
+                }
+                .help("Start a new server (⌘N)")
             }
-            .help("Start a new server (⌘N)")
         }
     }
 }
@@ -124,6 +152,7 @@ private struct DropOverlay: View {
 
 struct SidebarView: View {
     @ObservedObject var state: AppState
+    @ObservedObject var agentStore: AgentStore
 
     var body: some View {
         List(selection: sidebarBinding) {
@@ -131,6 +160,11 @@ struct SidebarView: View {
                 row(.all)
                 row(.favorites)
                 row(.launchers)
+            }
+            Section("Agents") {
+                row(.agentActivity)
+                row(.agentUsage)
+                row(.agentLimits)
             }
             Section("Stack") {
                 ForEach(TypeGroup.allCases) { row(.group($0)) }
@@ -158,8 +192,16 @@ struct SidebarView: View {
             HStack {
                 Text(item.title)
                 Spacer()
-                let n = state.count(for: item)
-                if n > 0 {
+                let n = count(for: item)
+                let urgent = attention(for: item)
+                if urgent > 0 {
+                    Text("\(urgent)")
+                        .font(.system(size: 11, weight: .semibold)).monospacedDigit()
+                        .foregroundStyle(TagColor.orange.fg)
+                        .padding(.horizontal, 5).frame(height: 16)
+                        .background(TagColor.orange.bg, in: Capsule())
+                        .help("\(urgent) need\(urgent == 1 ? "s" : "") you")
+                } else if n > 0 {
                     Text("\(n)").font(.system(size: 11.5)).foregroundStyle(.secondary).monospacedDigit()
                         .contentTransition(.numericText())
                 }
@@ -170,20 +212,55 @@ struct SidebarView: View {
         .tag(item)
     }
 
+    private func count(for item: SidebarItem) -> Int {
+        item == .agentActivity ? agentStore.runningSessions.count : state.count(for: item)
+    }
+
+    /// Orange count of sessions waiting on the user; shown instead of the running count when non-zero.
+    private func attention(for item: SidebarItem) -> Int {
+        item == .agentActivity ? agentStore.attentionSessions.count : 0
+    }
+
     private var footer: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(state.autoRefresh ? N.green : N.text3)
-                .frame(width: 7, height: 7)
-            RelativeTimeText(date: state.lastScan)
-                .font(.system(size: 11.5))
-                .foregroundStyle(.secondary)
-            Spacer()
-            Toggle("Live", isOn: $state.autoRefresh)
-                .toggleStyle(.switch)
-                .controlSize(.mini)
-                .labelsHidden()
-                .help("Refresh every 4 seconds")
+        Group {
+            if state.sidebar.isAgentPage {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(agentStore.settings.autoRefresh ? N.green : N.text3)
+                        .frame(width: 7, height: 7)
+                    RelativeTimeText(date: agentStore.lastRefresh)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Toggle("Live", isOn: Binding(
+                        get: { agentStore.settings.autoRefresh },
+                        set: { enabled in
+                            var settings = agentStore.settings
+                            settings.autoRefresh = enabled
+                            agentStore.saveSettings(settings)
+                        }
+                    ))
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .labelsHidden()
+                    .help("Refresh agents every 15 seconds")
+                }
+            } else {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(state.autoRefresh ? N.green : N.text3)
+                        .frame(width: 7, height: 7)
+                    RelativeTimeText(date: state.lastScan)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Toggle("Live", isOn: $state.autoRefresh)
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+                        .labelsHidden()
+                        .help("Refresh every 4 seconds")
+                }
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)

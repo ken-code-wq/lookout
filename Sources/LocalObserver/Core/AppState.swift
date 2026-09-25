@@ -6,6 +6,9 @@ enum SidebarItem: Hashable {
     case all
     case favorites
     case launchers
+    case agentActivity
+    case agentUsage
+    case agentLimits
     case group(TypeGroup)
 
     var title: String {
@@ -13,6 +16,9 @@ enum SidebarItem: Hashable {
         case .all: return "All servers"
         case .favorites: return "Favorites"
         case .launchers: return "Launchers"
+        case .agentActivity: return "Activity"
+        case .agentUsage: return "Usage"
+        case .agentLimits: return "Limits"
         case .group(let g): return g.rawValue
         }
     }
@@ -22,7 +28,17 @@ enum SidebarItem: Hashable {
         case .all: return "server.rack"
         case .favorites: return "star"
         case .launchers: return "play.square.stack"
+        case .agentActivity: return "waveform.path.ecg"
+        case .agentUsage: return "chart.xyaxis.line"
+        case .agentLimits: return "gauge.with.dots.needle.33percent"
         case .group(let g): return g.symbol
+        }
+    }
+
+    var isAgentPage: Bool {
+        switch self {
+        case .agentActivity, .agentUsage, .agentLimits: return true
+        default: return false
         }
     }
 }
@@ -182,7 +198,7 @@ final class AppState: ObservableObject {
     var filtered: [ServerEntry] {
         var list = visibleServers
         switch sidebar {
-        case .all, .launchers: break
+        case .all, .launchers, .agentActivity, .agentUsage, .agentLimits: break
         case .favorites: list = list.filter { favorites.contains($0.port) }
         case .group(let g): list = list.filter { $0.projectType.group == g }
         }
@@ -213,6 +229,7 @@ final class AppState: ObservableObject {
         case .all: return visibleServers.count
         case .favorites: return visibleServers.filter { favorites.contains($0.port) }.count
         case .launchers: return managed.count
+        case .agentActivity, .agentUsage, .agentLimits: return 0
         case .group(let g): return visibleServers.filter { $0.projectType.group == g }.count
         }
     }

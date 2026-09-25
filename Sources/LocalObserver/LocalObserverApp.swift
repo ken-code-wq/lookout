@@ -1,8 +1,16 @@
 import SwiftUI
 import AppKit
+import LocalObserverCore
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        if let directory = SnapshotHarness.directory {
+            NSApp.windows.forEach { $0.orderOut(nil) }
+            SnapshotHarness.run(to: directory)
+            return
+        }
+        #endif
         // `swift run` launches a bare executable; make it a proper foreground app with a Dock icon.
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
@@ -16,12 +24,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct LocalObserverApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var state = AppState()
+    @StateObject private var agentStore = AgentStore()
 
     var body: some Scene {
         Window("Local Observer", id: "main") {
-            ContentView(state: state)
+            ContentView(state: state, agentStore: agentStore)
         }
-        .defaultSize(width: 1180, height: 760)
+        .defaultSize(width: 1280, height: 800)
         .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(replacing: .newItem) {
@@ -29,13 +38,31 @@ struct LocalObserverApp: App {
                     .keyboardShortcut("n")
             }
             CommandGroup(after: .toolbar) {
-                Button("Refresh") { state.refresh() }
+                Button("Refresh") {
+                    if state.sidebar.isAgentPage { agentStore.refresh() } else { state.refresh() }
+                }
                     .keyboardShortcut("r")
                 Picker("View", selection: $state.viewMode) {
                     ForEach(ViewMode.allCases) { Text($0.rawValue).tag($0) }
                 }
                 Toggle("Show System Ports", isOn: $state.showSystem)
                 Divider()
+            }
+            CommandMenu("Agents") {
+                Button("Activity") { state.sidebar = .agentActivity }
+                    .keyboardShortcut("1", modifiers: [.command, .option])
+                Button("Usage") { state.sidebar = .agentUsage }
+                    .keyboardShortcut("2", modifiers: [.command, .option])
+                Button("Limits") { state.sidebar = .agentLimits }
+                    .keyboardShortcut("3", modifiers: [.command, .option])
+                Divider()
+                Button("Refresh Agents and Limits") { agentStore.refresh(forceLimits: true) }
+                    .keyboardShortcut("r", modifiers: [.command, .shift])
+                Button("Jump to Session") {
+                    if let session = agentStore.selectedSession { AgentActions.jump(to: session) }
+                }
+                .keyboardShortcut("j")
+                .disabled(agentStore.selectedSession?.process?.host == nil)
             }
             CommandMenu("Server") {
                 let s = state.selected
@@ -61,21 +88,41 @@ struct LocalObserverApp: App {
             }
         }
 
+        Settings {
+            AgentSettingsView(store: agentStore)
+        }
+
         MenuBarExtra {
-            MenuBarView(state: state)
+            MenuBarView(state: state, agentStore: agentStore)
         } label: {
-            MenuBarLabel(count: state.visibleServers.count)
+            MenuBarLabel(
+                serverCount: state.visibleServers.count,
+                agentCount: agentStore.runningSessions.count,
+                attentionCount: agentStore.attentionSessions.count
+            )
+            .task { AgentNotifier.shared.attach(to: agentStore) }
         }
         .menuBarExtraStyle(.window)
     }
 }
 
 private struct MenuBarLabel: View {
-    var count: Int
+    var serverCount: Int
+    var agentCount: Int
+    var attentionCount: Int
+
     var body: some View {
         HStack(spacing: 3) {
-            Image(systemName: count > 0 ? "server.rack" : "server.rack")
-            if count > 0 { Text("\(count)").monospacedDigit() }
+            Image(systemName: "server.rack")
+            if serverCount > 0 { Text("\(serverCount)").monospacedDigit() }
+            if attentionCount > 0 {
+                // A raised hand reads as "needs you" even in a monochrome menu bar.
+                Image(systemName: "hand.raised.fill")
+                Text("\(attentionCount)").monospacedDigit()
+            } else if agentCount > 0 {
+                Image(systemName: "sparkles")
+                Text("\(agentCount)").monospacedDigit()
+            }
         }
     }
 }

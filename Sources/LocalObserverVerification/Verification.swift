@@ -1,0 +1,94 @@
+import Foundation
+import LocalObserverCore
+
+@main
+struct LocalObserverVerification {
+    @MainActor
+    static func main() {
+        let now = Date(timeIntervalSince1970: 100_000)
+        let processes = AgentDiscovery.parseProcessTable("321 12 02:03:04 ttys001 opencode serve\n", now: now)
+        precondition(processes.count == 1, "Process parsing failed")
+        precondition(processes[0].startedAt == now.addingTimeInterval(-7_384), "Elapsed time parsing failed")
+        precondition(AgentDiscovery.classify(processName: "opencode.exe", arguments: "opencode serve") == .openCode, "OpenCode classification failed")
+        precondition(AgentDiscovery.classify(processName: "Code - Insiders", arguments: "helper @github/copilot-darwin-arm64/index.js --headless") == .copilot, "Copilot classification failed")
+
+        let usage = TokenUsage(
+            inputTokens: 12_000,
+            cachedInputTokens: 3_000,
+            cacheCreationTokens: 1_000,
+            outputTokens: 2_000,
+            reportedTotalTokens: 16_000
+        )
+        let normalizedUsage = usage.normalized()
+        precondition(normalizedUsage.processedTokens == 14_000, "Token normalization double-counted provider totals")
+        let mixed = normalizedUsage.adding(TokenUsage(reportedTotalTokens: 1_000))
+        precondition(mixed.processedTokens == 15_000, "Reported-only usage was lost during aggregation")
+
+        let events = [
+            AgentUsageEvent(
+                id: "claude",
+                agent: .claude,
+                sessionID: "one",
+                projectPath: "/tmp/project",
+                projectName: "project",
+                model: "opus",
+                observedAt: now,
+                usage: TokenUsage(inputTokens: 100, outputTokens: 10),
+                cost: 0.25,
+                requests: 1,
+                sourcePath: "/tmp/claude.jsonl",
+                sourceKind: .transcript
+            ),
+            AgentUsageEvent(
+                id: "codex",
+                agent: .codex,
+                sessionID: "two",
+                projectPath: "/tmp/project",
+                projectName: "project",
+                model: "gpt",
+                observedAt: now,
+                usage: TokenUsage(inputTokens: 200, outputTokens: 20),
+                cost: nil,
+                requests: 1,
+                sourcePath: "/tmp/codex.jsonl",
+                sourceKind: .transcript
+            )
+        ]
+        var filter = AgentUsageFilter()
+        filter.range = .sevenDays
+        let report = AgentStore.buildReport(events: events, filter: filter, enabledAgents: Set(AgentKind.allCases), now: now)
+        precondition(report.totals.processed == 330, "Usage report token total failed")
+        precondition(report.totals.requests == 2, "Usage report request total failed")
+        precondition(abs(report.totals.cost - 0.25) < 0.0001, "Usage report cost total failed")
+        precondition(report.totals.sessions == 2, "Usage report session count failed")
+        precondition(report.byAgent.first?.agent == .codex, "Agent share rows should sort by the selected metric")
+        precondition(report.bucketDates.count == 7, "Daily axis should be zero-filled across the range")
+
+        var codexOnly = filter
+        codexOnly.agents = [.codex]
+        let narrowed = AgentStore.buildReport(events: events, filter: codexOnly, enabledAgents: Set(AgentKind.allCases), now: now)
+        precondition(narrowed.totals.processed == 220 && narrowed.availableModels == ["gpt"], "Agent filter failed")
+
+        // Process discovery: Windows-style .exe names, daemons, and nested launchers.
+        precondition(AgentDiscovery.classify(processName: "/x/claude-code/bin/claude.exe", arguments: "claude.exe --output-format stream-json") == .claude, "claude.exe classification failed")
+        precondition(AgentDiscovery.classify(processName: "/x/bin/codex", arguments: "codex app-server --listen unix:// --managed-daemon") == nil, "Codex daemon should not be a session")
+        precondition(AgentDiscovery.classify(processName: "/Applications/Cursor.app/Contents/Frameworks/Cursor Helper.app/Contents/MacOS/Cursor Helper", arguments: "") == nil, "App helpers should not count")
+        precondition(AgentDiscovery.classify(processName: "/Applications/Cursor.app/Contents/MacOS/Cursor", arguments: "") == .cursor, "Cursor app classification failed")
+
+        // Pace marker: 60% used with 40% of a 5-hour window elapsed runs out before the reset.
+        let window = AgentQuotaWindow(
+            id: "w", agent: .claude, label: "5-hour session", kind: .session, usedPercent: 60,
+            resetsAt: now.addingTimeInterval(3 * 3_600), windowDuration: 5 * 3_600,
+            observedAt: now, source: "test", account: ""
+        )
+        precondition(abs((window.elapsedFraction(now: now) ?? 0) - 0.4) < 0.001, "Window elapsed fraction failed")
+
+        LimitChecks.run()
+
+        for agent in AgentKind.allCases {
+            precondition(AgentIconStore.image(for: agent) != nil, "Missing official icon for \(agent.name)")
+        }
+
+        print("Local Observer core verification passed")
+    }
+}
