@@ -183,3 +183,120 @@ struct ManagedServer: Identifiable, Codable, Hashable {
 
     var logPath: String { ProcessManager.logURL(for: self).path }
 }
+
+// MARK: - Server filters
+
+enum ServerStatusFilter: String, CaseIterable, Identifiable, Hashable {
+    case online = "Online"
+    case authRequired = "Auth required"
+    case httpError = "HTTP error"
+    case tcpOnly = "TCP only"
+    var id: String { rawValue }
+
+    init(_ server: ServerEntry) {
+        switch server.httpState {
+        case .online: self = .online
+        case .authRequired: self = .authRequired
+        case .error: self = .httpError
+        case .offline, .unknown: self = .tcpOnly
+        }
+    }
+}
+
+enum ServerOrigin: String, CaseIterable, Identifiable, Hashable {
+    case any = "Any origin"
+    case launcher = "From launchers"
+    case external = "Started elsewhere"
+    var id: String { rawValue }
+}
+
+enum ServerExposure: String, CaseIterable, Identifiable, Hashable {
+    case any = "Any address"
+    case loopback = "This Mac only"
+    case network = "Reachable on network"
+    var id: String { rawValue }
+
+    static func isLoopback(_ address: String) -> Bool {
+        ["127.0.0.1", "::1", "localhost"].contains(address) || address.hasPrefix("127.")
+    }
+}
+
+enum ServerMemoryFilter: Int, CaseIterable, Identifiable, Hashable {
+    case any = 0
+    case over100MB = 102_400
+    case over500MB = 512_000
+    case over1GB = 1_048_576
+    var id: Int { rawValue }
+    var title: String {
+        switch self {
+        case .any: return "Any memory"
+        case .over100MB: return "Over 100 MB"
+        case .over500MB: return "Over 500 MB"
+        case .over1GB: return "Over 1 GB"
+        }
+    }
+}
+
+enum ServerUptimeFilter: String, CaseIterable, Identifiable, Hashable {
+    case any = "Any uptime"
+    case underHour = "Started < 1 hour ago"
+    case overHour = "Up > 1 hour"
+    case overDay = "Up > 1 day"
+    var id: String { rawValue }
+
+    func matches(_ uptime: TimeInterval) -> Bool {
+        switch self {
+        case .any: return true
+        case .underHour: return uptime < 3600
+        case .overHour: return uptime >= 3600
+        case .overDay: return uptime >= 86_400
+        }
+    }
+}
+
+enum PortRangeFilter: String, CaseIterable, Identifiable, Hashable {
+    case any = "Any port"
+    case wellKnown = "Below 1024"
+    case dev = "1024 – 9999"
+    case high = "10000 and up"
+    var id: String { rawValue }
+
+    func matches(_ port: Int) -> Bool {
+        switch self {
+        case .any: return true
+        case .wellKnown: return port < 1024
+        case .dev: return (1024..<10_000).contains(port)
+        case .high: return port >= 10_000
+        }
+    }
+}
+
+/// Filters on the servers table, layered on top of the sidebar group and search. Empty sets mean "everything".
+struct ServerFilter: Hashable {
+    var statuses: Set<ServerStatusFilter> = []
+    var types: Set<ProjectType> = []
+    var origin: ServerOrigin = .any
+    var exposure: ServerExposure = .any
+    var memory: ServerMemoryFilter = .any
+    var uptime: ServerUptimeFilter = .any
+    var ports: PortRangeFilter = .any
+
+    var isNarrowed: Bool { self != ServerFilter() }
+
+    func matches(_ s: ServerEntry) -> Bool {
+        if !statuses.isEmpty, !statuses.contains(ServerStatusFilter(s)) { return false }
+        if !types.isEmpty, !types.contains(s.projectType) { return false }
+        switch origin {
+        case .any: break
+        case .launcher: if !s.isManaged { return false }
+        case .external: if s.isManaged { return false }
+        }
+        switch exposure {
+        case .any: break
+        case .loopback: if !ServerExposure.isLoopback(s.bindAddress) { return false }
+        case .network: if ServerExposure.isLoopback(s.bindAddress) { return false }
+        }
+        if memory != .any, s.rssKB < memory.rawValue { return false }
+        return uptime.matches(s.uptime) && ports.matches(s.port)
+    }
+}

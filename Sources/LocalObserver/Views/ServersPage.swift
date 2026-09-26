@@ -13,6 +13,8 @@ struct ServersPage: View {
                 PageHeader(symbol: state.sidebar.symbol, title: state.sidebar.title, subtitle: AnyView(summary))
                 ViewBar(state: state)
                 Rectangle().fill(N.divider).frame(height: 1)
+                ServerFilterBar(state: state)
+                    .padding(.vertical, 8)
 
                 if servers.isEmpty {
                     empty
@@ -81,7 +83,12 @@ struct ServersPage: View {
     }
 
     @ViewBuilder private var empty: some View {
-        if !state.searchText.isEmpty {
+        if state.serverFilter.isNarrowed && !state.groupServers.isEmpty {
+            EmptyStateView(symbol: "line.3.horizontal.decrease.circle", title: "Nothing matches these filters",
+                           message: "\(state.groupServers.count) server\(state.groupServers.count == 1 ? " is" : "s are") hidden by the current filters.") {
+                Button("Clear filters") { state.clearServerFilters() }.buttonStyle(SecondaryButtonStyle())
+            }
+        } else if !state.searchText.isEmpty {
             EmptyStateView(symbol: "magnifyingglass", title: "No matches",
                            message: "Nothing is listening that matches “\(state.searchText)”.") {
                 Button("Clear search") { state.searchText = "" }.buttonStyle(SecondaryButtonStyle())
@@ -153,6 +160,8 @@ private struct ViewBar: View {
                     ForEach(SortKey.allCases) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.inline)
+                Divider()
+                Toggle("Reverse order", isOn: $state.sortDescending)
             } label: {
                 Label("Sort", systemImage: "arrow.up.arrow.down")
                     .labelStyle(labels ? AnyLabelStyle(TightLabelStyle()) : AnyLabelStyle(.iconOnly))
@@ -182,6 +191,90 @@ private struct ViewBar: View {
             .padding(.leading, 6)
         }
         .fixedSize()
+    }
+}
+
+// MARK: - Filter bar
+
+/// Notion-style filter pills for the servers table: status, type, origin, address, port, memory, uptime.
+private struct ServerFilterBar: View {
+    @ObservedObject var state: AppState
+
+    private var filter: ServerFilter { state.serverFilter }
+
+    /// Only offer types that are actually present in the current sidebar group.
+    private var types: [ProjectType] {
+        let present = Set(state.groupServers.map(\.projectType))
+        return ProjectType.allCases.filter { present.contains($0) || filter.types.contains($0) }
+    }
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 6) {
+                FilterChip(title: setTitle("Status", filter.statuses.map(\.rawValue)), symbol: "circle.dashed",
+                           active: !filter.statuses.isEmpty) {
+                    Button("Any status") { state.serverFilter.statuses = [] }
+                    Divider()
+                    ForEach(ServerStatusFilter.allCases) { status in
+                        Toggle("\(status.rawValue)  (\(count { ServerStatusFilter($0) == status }))",
+                               isOn: toggle(\.statuses, status))
+                    }
+                }
+                FilterChip(title: setTitle("Type", filter.types.map(\.rawValue)), symbol: "tag", active: !filter.types.isEmpty) {
+                    Button("All types") { state.serverFilter.types = [] }
+                    if !types.isEmpty { Divider() }
+                    ForEach(types, id: \.self) { type in
+                        Toggle("\(type.rawValue)  (\(count { $0.projectType == type }))", isOn: toggle(\.types, type))
+                    }
+                }
+                single("Origin", symbol: "play.square.stack", value: \.origin, all: ServerOrigin.allCases, title: \.rawValue)
+                single("Address", symbol: "network", value: \.exposure, all: ServerExposure.allCases, title: \.rawValue)
+                single("Port", symbol: "number", value: \.ports, all: PortRangeFilter.allCases, title: \.rawValue)
+                single("Memory", symbol: "memorychip", value: \.memory, all: ServerMemoryFilter.allCases, title: \.title)
+                single("Uptime", symbol: "clock", value: \.uptime, all: ServerUptimeFilter.allCases, title: \.rawValue)
+                if filter.isNarrowed || !state.searchText.isEmpty {
+                    Button("Clear") { state.clearServerFilters() }
+                        .buttonStyle(GhostButtonStyle())
+                        .help("Remove every filter and the search")
+                }
+            }
+            .padding(.vertical, 1)
+        }
+        .scrollIndicators(.never)
+    }
+
+    private func count(_ test: (ServerEntry) -> Bool) -> Int { state.groupServers.filter(test).count }
+
+    /// A single-choice pill whose first case means "no filter".
+    private func single<V: Hashable & Identifiable>(
+        _ name: String, symbol: String, value: WritableKeyPath<ServerFilter, V>, all: [V], title: KeyPath<V, String>
+    ) -> some View {
+        let current = filter[keyPath: value]
+        let active = current != all.first
+        return FilterChip(title: active ? current[keyPath: title] : name, symbol: symbol, active: active) {
+            Picker(name, selection: Binding(get: { state.serverFilter[keyPath: value] },
+                                            set: { state.serverFilter[keyPath: value] = $0 })) {
+                ForEach(all) { Text($0[keyPath: title]).tag($0) }
+            }
+            .pickerStyle(.inline)
+        }
+    }
+
+    private func toggle<T: Hashable>(_ key: WritableKeyPath<ServerFilter, Set<T>>, _ value: T) -> Binding<Bool> {
+        Binding(
+            get: { state.serverFilter[keyPath: key].contains(value) },
+            set: { on in
+                if on { state.serverFilter[keyPath: key].insert(value) } else { state.serverFilter[keyPath: key].remove(value) }
+            }
+        )
+    }
+
+    private func setTitle(_ name: String, _ values: [String]) -> String {
+        switch values.count {
+        case 0: return name
+        case 1: return "\(name): \(values[0])"
+        default: return "\(name): \(values.count)"
+        }
     }
 }
 

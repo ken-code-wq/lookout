@@ -795,3 +795,58 @@ public struct AgentUsageReport: Sendable {
         }
     }
 }
+
+/// Coarse state buckets the Activity page groups running sessions into.
+public enum AgentActivityBucket: String, CaseIterable, Identifiable, Sendable {
+    case needsYou = "Needs you"
+    case working = "Working"
+    case yourTurn = "Your turn"
+    case idle = "Idle"
+
+    public var id: String { rawValue }
+
+    public init(_ session: AgentSession) {
+        if session.needsAttention { self = .needsYou; return }
+        switch session.state {
+        case .running, .working, .thinking, .toolUse: self = .working
+        case .waiting: self = .yourTurn
+        default: self = .idle
+        }
+    }
+}
+
+/// Filters for the Activity page. Empty sets mean "everything".
+public struct AgentActivityFilter: Hashable, Sendable {
+    public var agents: Set<AgentKind> = []
+    public var buckets: Set<AgentActivityBucket> = []
+    public var projects: Set<String> = []
+    public var models: Set<String> = []
+    /// Only recent sessions updated inside this window; nil keeps the whole history.
+    public var recentRange: AgentDateRange? = nil
+    /// Only recent sessions that used at least this many tokens.
+    public var minTokens: Int64 = 0
+
+    public init() {}
+
+    public var isNarrowed: Bool {
+        !agents.isEmpty || !buckets.isEmpty || !projects.isEmpty || !models.isEmpty || recentRange != nil || minTokens > 0
+    }
+
+    /// Filters shared by running and recent sessions.
+    public func matches(_ session: AgentSession) -> Bool {
+        (agents.isEmpty || agents.contains(session.agent))
+            && (projects.isEmpty || projects.contains(session.projectName))
+            && (models.isEmpty || models.contains(session.model))
+    }
+
+    public func matchesRunning(_ session: AgentSession) -> Bool {
+        matches(session) && (buckets.isEmpty || buckets.contains(AgentActivityBucket(session)))
+    }
+
+    public func matchesRecent(_ session: AgentSession, now: Date = .now, calendar: Calendar = .current) -> Bool {
+        guard matches(session) else { return false }
+        if let recentRange, session.updatedAt < recentRange.start(now: now, calendar: calendar) { return false }
+        if minTokens > 0, (session.usage?.processedTokens ?? 0) < minTokens { return false }
+        return true
+    }
+}

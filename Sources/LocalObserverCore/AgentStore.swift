@@ -14,6 +14,7 @@ public final class AgentStore: ObservableObject {
     @Published public var settings: AgentSettings
     @Published public var filter = AgentUsageFilter() { didSet { if filter != oldValue { rebuildUsage() } } }
     @Published public var searchText = "" { didSet { if searchText != oldValue { rebuildUsage() } } }
+    @Published public var activityFilter = AgentActivityFilter()
     @Published public var selectedSessionID: String?
     @Published public var isSettingsPresented = false
 
@@ -148,6 +149,11 @@ public final class AgentStore: ObservableObject {
         cleared.metric = filter.metric
         cleared.grouping = filter.grouping
         filter = cleared
+        searchText = ""
+    }
+
+    public func clearActivityFilters() {
+        activityFilter = AgentActivityFilter()
         searchText = ""
     }
 

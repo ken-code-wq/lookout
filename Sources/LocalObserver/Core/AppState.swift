@@ -55,6 +55,8 @@ enum SortKey: String, CaseIterable, Identifiable {
     case name = "Name"
     case uptime = "Uptime"
     case memory = "Memory"
+    case cpu = "CPU"
+    case latency = "Response time"
     var id: String { rawValue }
 }
 
@@ -91,6 +93,8 @@ final class AppState: ObservableObject {
     @Published var toast: Toast? = nil
     @Published var draft: LauncherDraft? = nil
     @Published var sortKey: SortKey = .port
+    @Published var sortDescending = false
+    @Published var serverFilter = ServerFilter()
     @Published var viewMode: ViewMode { didSet { defaults.set(viewMode.rawValue, forKey: Keys.viewMode) } }
     @Published var showSystem: Bool { didSet { defaults.set(showSystem, forKey: Keys.showSystem) } }
     @Published var autoRefresh: Bool { didSet { defaults.set(autoRefresh, forKey: Keys.autoRefresh); scheduleTimer() } }
@@ -202,6 +206,7 @@ final class AppState: ObservableObject {
         case .favorites: list = list.filter { favorites.contains($0.port) }
         case .group(let g): list = list.filter { $0.projectType.group == g }
         }
+        if serverFilter.isNarrowed { list = list.filter(serverFilter.matches) }
         let q = searchText.trimmingCharacters(in: .whitespaces).lowercased()
         if !q.isEmpty {
             list = list.filter {
@@ -215,13 +220,31 @@ final class AppState: ObservableObject {
             // Your projects first; app helpers (VS Code, Chrome…) sink below them.
             let aa = a.projectType == .app, ab = b.projectType == .app
             if aa != ab { return ab }
+            let ascending: Bool
             switch sortKey {
-            case .port: return a.port < b.port
-            case .name: return a.projectName.localizedCaseInsensitiveCompare(b.projectName) == .orderedAscending
-            case .uptime: return a.uptime < b.uptime
-            case .memory: return a.rssKB > b.rssKB
+            case .port: ascending = a.port < b.port
+            case .name: ascending = a.projectName.localizedCaseInsensitiveCompare(b.projectName) == .orderedAscending
+            case .uptime: ascending = a.uptime < b.uptime
+            case .memory: ascending = a.rssKB > b.rssKB
+            case .cpu: ascending = a.cpu > b.cpu
+            case .latency: ascending = (a.latencyMs > 0 ? a.latencyMs : .max) < (b.latencyMs > 0 ? b.latencyMs : .max)
             }
+            return ascending != sortDescending
         }
+    }
+
+    /// Servers in the current sidebar group before search and filters — the pool filter menus draw from.
+    var groupServers: [ServerEntry] {
+        switch sidebar {
+        case .favorites: return visibleServers.filter { favorites.contains($0.port) }
+        case .group(let g): return visibleServers.filter { $0.projectType.group == g }
+        default: return visibleServers
+        }
+    }
+
+    func clearServerFilters() {
+        serverFilter = ServerFilter()
+        searchText = ""
     }
 
     func count(for item: SidebarItem) -> Int {

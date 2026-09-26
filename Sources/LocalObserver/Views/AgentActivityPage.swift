@@ -9,19 +9,18 @@ struct AgentActivityPage: View {
     @State private var recentLimit = 25
     @FocusState private var focused: Bool
 
-    private var running: [AgentSession] { store.runningSessions }
+    private var filter: AgentActivityFilter { store.activityFilter }
+
+    /// Running sessions after search, before the page filters — the basis for filter options and counts.
+    private var allRunning: [AgentSession] { store.runningSessions }
+
+    private var running: [AgentSession] { allRunning.filter(filter.matchesRunning) }
 
     private var groups: [(title: String, sessions: [AgentSession])] {
         let sessions = running.filter { $0.process.map { !AgentDiscovery.isDesktopApp($0.processName) } ?? true }
-        let order: [(String, (AgentSession) -> Bool)] = [
-            ("Needs you", { $0.needsAttention }),
-            ("Working", { [.running, .working, .thinking, .toolUse].contains($0.state) }),
-            ("Your turn", { $0.state == .waiting }),
-            ("Idle", { [.idle, .unknown].contains($0.state) })
-        ]
-        return order.compactMap { title, test in
-            let matches = sessions.filter(test).sorted { $0.updatedAt > $1.updatedAt }
-            return matches.isEmpty ? nil : (title, matches)
+        return AgentActivityBucket.allCases.compactMap { bucket in
+            let matches = sessions.filter { AgentActivityBucket($0) == bucket }.sorted { $0.updatedAt > $1.updatedAt }
+            return matches.isEmpty ? nil : (bucket.rawValue, matches)
         }
     }
 
@@ -29,7 +28,14 @@ struct AgentActivityPage: View {
         running.filter { $0.process.map { AgentDiscovery.isDesktopApp($0.processName) } ?? false }
     }
 
-    private var recent: [AgentSession] { Array(store.recentSessions.prefix(recentLimit)) }
+    private var filteredRecent: [AgentSession] {
+        let now = Date.now
+        return store.recentSessions.filter { filter.matchesRecent($0, now: now) }
+    }
+
+    private var recent: [AgentSession] { Array(filteredRecent.prefix(recentLimit)) }
+
+    private var isFiltering: Bool { filter.isNarrowed || !store.searchText.isEmpty }
 
     private var navigable: [AgentSession] { groups.flatMap(\.sessions) + recent }
 
@@ -37,6 +43,8 @@ struct AgentActivityPage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 PageHeader(symbol: "waveform.path.ecg", title: "Activity", subtitle: AnyView(summary))
+                ActivityFilterBar(store: store)
+                    .padding(.bottom, 24)
 
                 if !store.settings.hasCompletedSetup {
                     AgentSetupPanel(store: store)
@@ -105,15 +113,17 @@ struct AgentActivityPage: View {
         if groups.isEmpty {
             EmptyStateView(
                 symbol: "terminal",
-                title: store.searchText.isEmpty ? "No agents running" : "No running sessions match",
-                message: store.searchText.isEmpty
+                title: isFiltering && !allRunning.isEmpty ? "No running sessions match" : "No agents running",
+                message: !isFiltering
                     ? "Start \(startHint) in a terminal or editor. It shows up here within 15 seconds."
-                    : "Nothing running matches “\(store.searchText)”."
+                    : (store.searchText.isEmpty
+                        ? "\(allRunning.count) running session\(allRunning.count == 1 ? " is" : "s are") hidden by the current filters."
+                        : "Nothing running matches “\(store.searchText)” with the current filters.")
             ) {
-                if store.searchText.isEmpty {
-                    Button("Refresh now") { store.refresh() }.buttonStyle(SecondaryButtonStyle())
+                if isFiltering {
+                    Button("Clear filters") { store.clearActivityFilters() }.buttonStyle(SecondaryButtonStyle())
                 } else {
-                    Button("Clear search") { store.searchText = "" }.buttonStyle(SecondaryButtonStyle())
+                    Button("Refresh now") { store.refresh() }.buttonStyle(SecondaryButtonStyle())
                 }
             }
             .padding(.vertical, -24)
@@ -165,13 +175,14 @@ struct AgentActivityPage: View {
 
     private var recentSection: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SectionTitle(title: "Recent sessions", count: store.recentSessions.count) {
-                Text("Last \(store.settings.historyDays) days").font(NFont.small).foregroundStyle(N.text3)
+            SectionTitle(title: "Recent sessions", count: filteredRecent.count) {
+                Text(filter.recentRange.map { "Updated \($0.phrase)" } ?? "Last \(store.settings.historyDays) days")
+                    .font(NFont.small).foregroundStyle(N.text3)
             }
             if recent.isEmpty {
-                Text(store.searchText.isEmpty
+                Text(!isFiltering
                      ? "Finished sessions from the enabled agents appear here."
-                     : "No recent sessions match “\(store.searchText)”.")
+                     : "No recent sessions match the current search and filters.")
                     .font(NFont.small)
                     .foregroundStyle(N.text2)
                     .padding(.vertical, 12)
@@ -187,8 +198,8 @@ struct AgentActivityPage: View {
                     }
                 }
                 .padding(.top, 2)
-                if store.recentSessions.count > recent.count {
-                    Button("Show \(min(25, store.recentSessions.count - recent.count)) more") { recentLimit += 25 }
+                if filteredRecent.count > recent.count {
+                    Button("Show \(min(25, filteredRecent.count - recent.count)) more") { recentLimit += 25 }
                         .buttonStyle(GhostButtonStyle())
                         .padding(.top, 6)
                 }
@@ -208,6 +219,100 @@ struct AgentActivityPage: View {
         let next = current.map { min(max($0 + delta, 0), list.count - 1) } ?? (delta > 0 ? 0 : list.count - 1)
         store.selectedSessionID = list[next].id
         return .handled
+    }
+}
+
+// MARK: - Filter bar
+
+/// Notion-style filter pills for the Activity page: agent, state, project, model, recency, and size.
+private struct ActivityFilterBar: View {
+    @ObservedObject var store: AgentStore
+
+    private var filter: AgentActivityFilter { store.activityFilter }
+
+    /// Options come from everything currently visible (after search), so a filter can never hide its own choices.
+    private var pool: [AgentSession] { store.runningSessions + store.recentSessions }
+
+    private var projects: [String] {
+        Set(pool.map(\.projectName).filter { !$0.isEmpty }).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
+    private var models: [String] {
+        Set(pool.map(\.model).filter { !$0.isEmpty }).sorted()
+    }
+
+    private static let tokenSteps: [(String, Int64)] = [
+        ("Any size", 0), ("10K+ tokens", 10_000), ("100K+ tokens", 100_000), ("1M+ tokens", 1_000_000), ("10M+ tokens", 10_000_000)
+    ]
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 6) {
+                FilterChip(title: setTitle("Agent", filter.agents.map(\.shortName)), symbol: "sparkles", active: !filter.agents.isEmpty) {
+                    Button("All agents") { store.activityFilter.agents = [] }
+                    Divider()
+                    ForEach(store.enabledAgentsSorted) { agent in
+                        Toggle(agent.name, isOn: toggle(\.agents, agent))
+                    }
+                }
+                FilterChip(title: setTitle("State", filter.buckets.map(\.rawValue)), symbol: "circle.dashed", active: !filter.buckets.isEmpty) {
+                    Button("Any state") { store.activityFilter.buckets = [] }
+                    Divider()
+                    ForEach(AgentActivityBucket.allCases) { bucket in
+                        Toggle(bucket.rawValue, isOn: toggle(\.buckets, bucket))
+                    }
+                }
+                FilterChip(title: setTitle("Project", filter.projects), symbol: "folder", active: !filter.projects.isEmpty) {
+                    Button("All projects") { store.activityFilter.projects = [] }
+                    if !projects.isEmpty { Divider() }
+                    ForEach(projects, id: \.self) { Toggle($0, isOn: toggle(\.projects, $0)) }
+                }
+                FilterChip(title: setTitle("Model", filter.models), symbol: "cpu", active: !filter.models.isEmpty) {
+                    Button("All models") { store.activityFilter.models = [] }
+                    if !models.isEmpty { Divider() }
+                    ForEach(models, id: \.self) { Toggle($0, isOn: toggle(\.models, $0)) }
+                }
+                FilterChip(title: filter.recentRange.map { "Updated \($0.title.lowercased())" } ?? "Any time",
+                           symbol: "calendar", active: filter.recentRange != nil) {
+                    Picker("Updated", selection: $store.activityFilter.recentRange) {
+                        Text("Any time").tag(AgentDateRange?.none)
+                        ForEach(AgentDateRange.allCases) { Text($0.title).tag(AgentDateRange?.some($0)) }
+                    }
+                    .pickerStyle(.inline)
+                }
+                FilterChip(title: Self.tokenSteps.first { $0.1 == filter.minTokens }?.0 ?? "Any size",
+                           symbol: "number", active: filter.minTokens > 0) {
+                    Picker("Size", selection: $store.activityFilter.minTokens) {
+                        ForEach(Self.tokenSteps, id: \.1) { Text($0.0).tag($0.1) }
+                    }
+                    .pickerStyle(.inline)
+                }
+                if filter.isNarrowed || !store.searchText.isEmpty {
+                    Button("Clear") { store.clearActivityFilters() }
+                        .buttonStyle(GhostButtonStyle())
+                        .help("Show every agent, state, project, and model")
+                }
+            }
+            .padding(.vertical, 1)
+        }
+        .scrollIndicators(.never)
+    }
+
+    private func toggle<T: Hashable>(_ key: WritableKeyPath<AgentActivityFilter, Set<T>>, _ value: T) -> Binding<Bool> {
+        Binding(
+            get: { store.activityFilter[keyPath: key].contains(value) },
+            set: { on in
+                if on { store.activityFilter[keyPath: key].insert(value) } else { store.activityFilter[keyPath: key].remove(value) }
+            }
+        )
+    }
+
+    private func setTitle<S: Collection>(_ name: String, _ values: S) -> String where S.Element == String {
+        switch values.count {
+        case 0: return name
+        case 1: return "\(name): \(values.first!)"
+        default: return "\(name): \(values.count)"
+        }
     }
 }
 
