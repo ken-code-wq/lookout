@@ -14,7 +14,17 @@ public final class AgentStore: ObservableObject {
     @Published public var settings: AgentSettings
     @Published public var filter = AgentUsageFilter() { didSet { if filter != oldValue { rebuildUsage() } } }
     @Published public var searchText = "" { didSet { if searchText != oldValue { rebuildUsage() } } }
+    /// Everything recorded today across enabled agents, regardless of the Usage page filters. Drives the menu bar and Dock.
+    @Published public private(set) var todayTotals = AgentUsageTotals()
+    /// Today's usage per model, most tokens first.
+    @Published public private(set) var todayModels: [AgentUsageRow] = []
     @Published public var activityFilter = AgentActivityFilter()
+    /// Compact chart shown in the menu bar panel and the notch, independent of the Usage page filters.
+    @Published public var glanceRange: AgentGlanceRange { didSet { if glanceRange != oldValue { saveGlance(); rebuildGlance() } } }
+    @Published public var glanceMetric: AgentMetricKind { didSet { if glanceMetric != oldValue { saveGlance(); rebuildGlance() } } }
+    /// Empty means every enabled agent.
+    @Published public var glanceAgents: Set<AgentKind> = [] { didSet { if glanceAgents != oldValue { saveGlance(); rebuildGlance() } } }
+    @Published public private(set) var glanceUsage = AgentUsageReport(filter: AgentUsageFilter())
     @Published public var selectedSessionID: String?
     @Published public var isSettingsPresented = false
 
@@ -24,9 +34,17 @@ public final class AgentStore: ObservableObject {
     private var refreshTask: Task<Void, Never>?
     private var limitsTask: Task<Void, Never>?
     private var ledgerSignature = 0
+    /// Bumped whenever `ledgerEvents` changes, so consumers can cache what they derive from it.
+    public private(set) var ledgerRevision = 0
+    /// When the usage reports were last rebuilt. Rolling windows ("today", "last 24 hours") move with the clock,
+    /// so they're rebuilt at least this often even when no new usage arrived.
+    private var usageBuiltAt = Date.distantPast
 
     private enum Keys {
         static let settings = "LocalObserver.agentSettings"
+        static let glanceRange = "LocalObserver.glanceRange"
+        static let glanceMetric = "LocalObserver.glanceMetric"
+        static let glanceAgents = "LocalObserver.glanceAgents"
     }
 
     private struct Ledger: Codable {
@@ -46,6 +64,9 @@ public final class AgentStore: ObservableObject {
         } else {
             settings = AgentSettings()
         }
+        glanceRange = AgentGlanceRange(rawValue: defaults.string(forKey: Keys.glanceRange) ?? "") ?? .last24h
+        glanceMetric = AgentMetricKind(rawValue: defaults.string(forKey: Keys.glanceMetric) ?? "") ?? .tokens
+        glanceAgents = Set((defaults.stringArray(forKey: Keys.glanceAgents) ?? []).compactMap(AgentKind.init(rawValue:)))
         ledgerEvents = Self.loadLedger(fileManager: fileManager)
         ledgerSignature = Self.signature(ledgerEvents)
         rebuildUsage()
@@ -71,19 +92,26 @@ public final class AgentStore: ObservableObject {
         refreshTask = Task { [weak self] in
             let fresh = await AgentDiscovery.scan(enabledAgents: enabled, historyDays: historyDays)
             guard let self else { return }
-            let cutoff = Calendar.current.date(byAdding: .day, value: -365, to: Date()) ?? .distantPast
-            let merged = Self.merge(self.ledgerEvents, fresh.usageEvents).filter { $0.observedAt >= cutoff }
-            let signature = Self.signature(merged)
-            if signature != self.ledgerSignature {
+            // Merging, sorting, and counting a year of events is real work; keep it off the main thread.
+            let previous = self.ledgerEvents
+            let (merged, signature, counts) = await Task.detached(priority: .utility) {
+                let cutoff = Calendar.current.date(byAdding: .day, value: -365, to: Date()) ?? .distantPast
+                let merged = Self.merge(previous, fresh.usageEvents).filter { $0.observedAt >= cutoff }
+                let counts = Dictionary(grouping: merged, by: \.agent).mapValues(\.count)
+                return (merged, Self.signature(merged), counts)
+            }.value
+            let ledgerChanged = signature != self.ledgerSignature
+            if ledgerChanged {
                 self.ledgerEvents = merged
                 self.ledgerSignature = signature
+                self.ledgerRevision += 1
                 self.persistLedger(merged)
             }
             var snapshot = fresh
             snapshot.usageEvents = []
             snapshot.integrations = fresh.integrations.map { integration in
                 var updated = integration
-                updated.usageEventCount = merged.lazy.filter { $0.agent == integration.agent }.count
+                updated.usageEventCount = counts[integration.agent] ?? 0
                 return updated
             }
             self.snapshot = snapshot
@@ -91,7 +119,7 @@ public final class AgentStore: ObservableObject {
             self.lastError = fresh.warnings.isEmpty ? nil : fresh.warnings.joined(separator: "\n")
             self.refreshTask = nil
             self.isScanning = false
-            self.rebuildUsage()
+            if ledgerChanged || Date().timeIntervalSince(self.usageBuiltAt) > 60 { self.rebuildUsage() }
         }
     }
 
@@ -146,6 +174,8 @@ public final class AgentStore: ObservableObject {
     public func clearFilters() {
         var cleared = AgentUsageFilter()
         cleared.range = filter.range
+        cleared.customStart = filter.customStart
+        cleared.customEnd = filter.customEnd
         cleared.metric = filter.metric
         cleared.grouping = filter.grouping
         filter = cleared
@@ -221,12 +251,39 @@ public final class AgentStore: ObservableObject {
     public var hasUsageHistory: Bool { !ledgerEvents.isEmpty }
 
     private func rebuildUsage() {
+        usageBuiltAt = Date()
         usage = Self.buildReport(
             events: ledgerEvents,
             filter: filter,
             enabledAgents: settings.enabledAgents,
             search: searchText
         )
+        var today = AgentUsageFilter()
+        today.setPreset(.today)
+        today.grouping = .model
+        let todayReport = Self.buildReport(events: ledgerEvents, filter: today, enabledAgents: settings.enabledAgents)
+        todayTotals = todayReport.totals
+        todayModels = todayReport.rows
+        rebuildGlance()
+    }
+
+    public var glanceFilter: AgentUsageFilter {
+        var filter = AgentUsageFilter()
+        glanceRange.apply(to: &filter)
+        filter.metric = glanceMetric
+        filter.agents = glanceAgents
+        filter.grouping = .agent
+        return filter
+    }
+
+    private func rebuildGlance() {
+        glanceUsage = Self.buildReport(events: ledgerEvents, filter: glanceFilter, enabledAgents: settings.enabledAgents)
+    }
+
+    private func saveGlance() {
+        defaults.set(glanceRange.rawValue, forKey: Keys.glanceRange)
+        defaults.set(glanceMetric.rawValue, forKey: Keys.glanceMetric)
+        defaults.set(glanceAgents.map(\.rawValue), forKey: Keys.glanceAgents)
     }
 
     public static func buildReport(
@@ -238,7 +295,8 @@ public final class AgentStore: ObservableObject {
         calendar: Calendar = .current
     ) -> AgentUsageReport {
         var report = AgentUsageReport(filter: filter)
-        let start = filter.range.start(now: now, calendar: calendar)
+        let start = filter.periodStart(now: now, calendar: calendar)
+        let end = filter.periodEnd(now: now, calendar: calendar)
         let agents = filter.agents.isEmpty ? enabledAgents : filter.agents.intersection(enabledAgents)
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
@@ -246,7 +304,7 @@ public final class AgentStore: ObservableObject {
         var projects = Set<String>()
         var models = Set<String>()
         var selected: [AgentUsageEvent] = []
-        for event in events where event.observedAt >= start && agents.contains(event.agent) {
+        for event in events where event.observedAt >= start && event.observedAt < end && agents.contains(event.agent) {
             report.hasAnyEvents = true
             if !event.projectName.isEmpty { projects.insert(event.projectName) }
             if !event.model.isEmpty { models.insert(event.model) }
@@ -264,7 +322,7 @@ public final class AgentStore: ObservableObject {
         var sessions = Set<String>()
         var byAgent: [AgentKind: (AgentUsageTotals, Set<String>)] = [:]
         var byGroup: [String: (AgentUsageTotals, Set<String>, Set<AgentKind>)] = [:]
-        let hourly = filter.range == .today
+        let hourly = filter.isHourly(calendar: calendar)
         report.isHourly = hourly
         var bucketTotals: [Date: [AgentKind: Double]] = [:]
 
@@ -333,14 +391,14 @@ public final class AgentStore: ObservableObject {
         var dates: [Date] = []
         if hourly {
             var cursor = start
-            let end = min(now, calendar.date(byAdding: .day, value: 1, to: start) ?? now)
-            while cursor <= end {
+            let last = min(now, calendar.date(byAdding: .day, value: 1, to: start) ?? now)
+            while cursor <= last {
                 dates.append(cursor)
-                cursor = calendar.date(byAdding: .hour, value: 1, to: cursor) ?? end.addingTimeInterval(1)
+                cursor = calendar.date(byAdding: .hour, value: 1, to: cursor) ?? last.addingTimeInterval(1)
             }
         } else {
             var cursor = start
-            let today = calendar.startOfDay(for: now)
+            let today = min(calendar.startOfDay(for: now), calendar.startOfDay(for: end.addingTimeInterval(-1)))
             while cursor <= today {
                 dates.append(cursor)
                 cursor = calendar.date(byAdding: .day, value: 1, to: cursor) ?? today.addingTimeInterval(1)
@@ -373,10 +431,17 @@ public final class AgentStore: ObservableObject {
     private func scheduleTimer() {
         timer?.invalidate()
         guard settings.autoRefresh else { return }
-        timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh(quiet: true) }
+        // Transcript parsing is the expensive part; a quiet machine doesn't need 15-second attention.
+        let active = !snapshot.processes.isEmpty
+        let interval: TimeInterval = active ? 15 : 60
+        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.refresh(quiet: true)
+                self.scheduleTimer()
+            }
         }
-        timer?.tolerance = 3
+        timer?.tolerance = interval / 3
     }
 
     private func persistSettings() {
@@ -419,7 +484,7 @@ public final class AgentStore: ObservableObject {
     }
 
     /// Later observations of the same event id replace earlier ones; ids are stable dedupe keys from the readers.
-    static func merge(_ old: [AgentUsageEvent], _ new: [AgentUsageEvent]) -> [AgentUsageEvent] {
+    nonisolated static func merge(_ old: [AgentUsageEvent], _ new: [AgentUsageEvent]) -> [AgentUsageEvent] {
         var byID: [String: AgentUsageEvent] = [:]
         byID.reserveCapacity(old.count + new.count)
         for event in old { byID[event.id] = event }
@@ -431,7 +496,7 @@ public final class AgentStore: ObservableObject {
         return byID.values.sorted { $0.observedAt > $1.observedAt }
     }
 
-    private static func signature(_ events: [AgentUsageEvent]) -> Int {
+    nonisolated private static func signature(_ events: [AgentUsageEvent]) -> Int {
         var hasher = Hasher()
         hasher.combine(events.count)
         for event in events.prefix(64) {

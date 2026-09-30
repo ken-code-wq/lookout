@@ -1,4 +1,5 @@
 import AppKit
+import LocalObserverShelf
 
 /// Resolves a favicon for a project: first from the folder on disk, then from the running server.
 /// Results (including misses) are cached so rows never flicker between refreshes.
@@ -22,6 +23,12 @@ final class IconStore {
     ]
 
     func cached(_ key: String) -> NSImage? { cache[key] }
+
+    /// The icon `icon(for:)` last resolved for this server, without starting a lookup.
+    func cached(for server: ServerEntry) -> NSImage? {
+        if server.projectRoot.isEmpty, let app = server.appBundlePath { return cache[app] }
+        return cache[server.iconKey]
+    }
 
     func icon(for server: ServerEntry) async -> NSImage? {
         if server.projectRoot.isEmpty, let app = server.appBundlePath {
@@ -89,22 +96,6 @@ final class IconStore {
 
     /// Rasterises to a small bitmap so big logos don't sit in memory.
     nonisolated private static func thumbnail(_ image: NSImage, side: CGFloat = 64) -> NSImage? {
-        guard image.size.width > 0, image.size.height > 0 else { return nil }
-        let px = Int(side * 2)
-        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px, bitsPerSample: 8,
-                                         samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
-        rep.size = NSSize(width: side, height: side)
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-        NSGraphicsContext.current?.imageInterpolation = .high
-        let scale = min(side / image.size.width, side / image.size.height)
-        let w = image.size.width * scale, h = image.size.height * scale
-        image.draw(in: NSRect(x: (side - w) / 2, y: (side - h) / 2, width: w, height: h),
-                   from: .zero, operation: .sourceOver, fraction: 1)
-        NSGraphicsContext.restoreGraphicsState()
-        let out = NSImage(size: rep.size)
-        out.addRepresentation(rep)
-        return out
+        ImageThumbnail.render(image, side: side)
     }
 }

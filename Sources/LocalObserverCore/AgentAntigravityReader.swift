@@ -21,6 +21,9 @@ enum AgentAntigravityReader {
 
     private final class Cache: @unchecked Sendable {
         var databases: [String: (stamp: AgentFileStamp, candidates: [UsageCandidate])] = [:]
+        /// `mergeAliases` over every database, reused while none of them changed. Rebuilding it meant copying
+        /// every candidate of every conversation on each refresh, which was most of this reader's time.
+        var merged: [UsageCandidate]?
         let lock = NSLock()
     }
 
@@ -30,9 +33,9 @@ enum AgentAntigravityReader {
         let cutoff = now.addingTimeInterval(-Double(historyDays) * 86_400)
         let roots = AgentDiscovery.dataURLs(for: .antigravity)
         var result = AgentArtifactResult()
-        var candidates: [UsageCandidate] = []
         var databases: [(url: URL, modifiedAt: Date, root: URL)] = []
         var failed = 0
+        var changed = false
         cache.lock.lock()
         var live: Set<String> = []
         for root in roots {
@@ -43,26 +46,32 @@ enum AgentAntigravityReader {
                 guard let stamp = combinedStamp(url), stamp.modifiedAt >= cutoff else { continue }
                 live.insert(url.path)
                 databases.append((url, stamp.modifiedAt, root))
-                if let cached = cache.databases[url.path], cached.stamp == stamp {
-                    candidates.append(contentsOf: cached.candidates)
-                    continue
-                }
+                if let cached = cache.databases[url.path], cached.stamp == stamp { continue }
+                changed = true
                 if let parsed = readDatabase(url, fallback: stamp.modifiedAt) {
                     cache.databases[url.path] = (stamp, parsed)
-                    candidates.append(contentsOf: parsed)
                 } else {
+                    // Keep what was read last time; the changed stamp makes the next refresh try again.
                     failed += 1
-                    if let cached = cache.databases[url.path] { candidates.append(contentsOf: cached.candidates) }
                 }
             }
         }
-        cache.databases = cache.databases.filter { live.contains($0.key) }
+        if cache.databases.keys.contains(where: { !live.contains($0) }) {
+            changed = true
+            cache.databases = cache.databases.filter { live.contains($0.key) }
+        }
+        let merged: [UsageCandidate]
+        if !changed, let reused = cache.merged {
+            merged = reused
+        } else {
+            merged = mergeAliases(databases.flatMap { cache.databases[$0.url.path]?.candidates ?? [] })
+            cache.merged = merged
+        }
         cache.lock.unlock()
         guard !databases.isEmpty else { return result }
         if failed > 0 { result.warnings.append("Antigravity could not read \(failed) conversation databases") }
 
         let summaries = Dictionary(roots.flatMap { readSummaries($0) }, uniquingKeysWith: { lhs, rhs in lhs.updated > rhs.updated ? lhs : rhs })
-        let merged = mergeAliases(candidates)
         let names = AgentProjectNames()
         var eventsBySession: [String: [AgentUsageEvent]] = [:]
         for candidate in merged where candidate.timestamp >= cutoff {

@@ -42,7 +42,7 @@ struct AgentActivityPage: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                PageHeader(symbol: "waveform.path.ecg", title: "Activity", subtitle: AnyView(summary))
+                PageHeader(symbol: "waveform.path.ecg", title: "Sessions", subtitle: AnyView(summary))
                 ActivityFilterBar(store: store)
                     .padding(.bottom, 24)
 
@@ -53,7 +53,7 @@ struct AgentActivityPage: View {
 
                 if store.settings.enabledAgents.isEmpty {
                     EmptyStateView(symbol: "sparkles", title: "No agents selected",
-                                   message: "Choose the coding agents Local Observer should watch.") {
+                                   message: "Choose the coding agents Lookout should watch.") {
                         SettingsLink { Text("Choose agents") }.buttonStyle(PrimaryButtonStyle())
                     }
                 } else if store.lastRefresh == nil {

@@ -16,7 +16,7 @@ struct AgentLimitsPage: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                PageHeader(symbol: "gauge.with.dots.needle.33percent", title: "Limits", subtitle: AnyView(subtitle))
+                PageHeader(symbol: "gauge.with.dots.needle.33percent", title: "Plan limits", subtitle: AnyView(subtitle))
 
                 if reports.isEmpty {
                     EmptyStateView(symbol: "gauge.with.dots.needle.0percent", title: "No agents selected",

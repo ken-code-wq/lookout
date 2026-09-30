@@ -96,7 +96,7 @@ struct AgentInspectorView: View {
                                 .foregroundStyle(N.text2)
                                 .textSelection(.enabled)
                                 .fixedSize(horizontal: false, vertical: true)
-                            Text("Read-only. Local Observer never writes to agent files.")
+                            Text("Read-only. Lookout never writes to agent files.")
                                 .font(NFont.caption)
                                 .foregroundStyle(N.text3)
                         }

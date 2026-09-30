@@ -38,31 +38,22 @@ enum PortScanner {
         let sockets = byKey.values.sorted { $0.port < $1.port }
         let pids = Set(sockets.map(\.pid))
 
-        async let psInfo = background { runPs(pids: pids) }
-        async let cwds = background { runCwds(pids: pids) }
-        let (info, dirs) = await (psInfo, cwds)
+        let info = await background { runPs(pids: pids) }
+        let (dirs, guesses) = await background { enrich(sockets: sockets, info: info) }
 
         var entries: [ServerEntry] = sockets.map { sock in
             let p = info[sock.pid] ?? ProcInfo()
             let cmd = p.args.isEmpty ? sock.processName : p.args
-            let cwd = dirs[sock.pid] ?? ""
-            let guess = guessProject(cwd: cwd, command: cmd, process: sock.processName)
+            let guess = guesses[sock.pid] ?? ProjectGuess(name: "Unknown", type: .other, root: "")
             return ServerEntry(
                 pid: sock.pid, pgid: p.pgid, processName: sock.processName, command: cmd,
-                port: sock.port, bindAddress: sock.address, workingDirectory: cwd,
+                port: sock.port, bindAddress: sock.address, workingDirectory: dirs[sock.pid] ?? "",
                 projectRoot: guess.root, projectName: guess.name, projectType: guess.type,
                 cpu: p.cpu, rssKB: p.rssKB, uptime: p.uptime
             )
         }
 
-        let probes = await withTaskGroup(of: (String, ProbeResult).self) { group in
-            for e in entries {
-                group.addTask { (e.id, await probe(e)) }
-            }
-            var out: [String: ProbeResult] = [:]
-            for await (id, res) in group { out[id] = res }
-            return out
-        }
+        let probes = await probeAll(entries)
         for i in entries.indices {
             guard let p = probes[entries[i].id] else { continue }
             entries[i].httpState = p.state
@@ -75,6 +66,56 @@ enum PortScanner {
     }
 
     // MARK: - process helpers
+
+    /// A process's cwd and project rarely change; re-running `lsof -d cwd` and walking
+    /// marker files for every pid on every scan dominated CPU. Keyed by pid, validated
+    /// against the process name and command line, so a restarted process is a miss.
+    private struct ProcCache {
+        var processName: String
+        var command: String
+        var cwd: String
+        var guess: ProjectGuess
+    }
+
+    private static let cacheLock = NSLock()
+    private static var procCache: [Int32: ProcCache] = [:]
+
+    static func enrich(sockets: [RawSocket], info: [Int32: ProcInfo]) -> ([Int32: String], [Int32: ProjectGuess]) {
+        var dirs: [Int32: String] = [:]
+        var guesses: [Int32: ProjectGuess] = [:]
+        var miss: [Int32: (processName: String, command: String)] = [:]
+        cacheLock.lock()
+        for sock in sockets where miss[sock.pid] == nil {
+            let p = info[sock.pid] ?? ProcInfo()
+            let cmd = p.args.isEmpty ? sock.processName : p.args
+            if let c = procCache[sock.pid], c.processName == sock.processName, c.command == cmd {
+                dirs[sock.pid] = c.cwd
+                guesses[sock.pid] = c.guess
+            } else {
+                miss[sock.pid] = (sock.processName, cmd)
+            }
+        }
+        cacheLock.unlock()
+
+        if !miss.isEmpty {
+            let fresh = runCwds(pids: Set(miss.keys))
+            cacheLock.lock()
+            for (pid, m) in miss {
+                let cwd = fresh[pid] ?? ""
+                let guess = guessProject(cwd: cwd, command: m.command, process: m.processName)
+                dirs[pid] = cwd
+                guesses[pid] = guess
+                procCache[pid] = ProcCache(processName: m.processName, command: m.command, cwd: cwd, guess: guess)
+            }
+            cacheLock.unlock()
+        }
+
+        cacheLock.lock()
+        let alive = Set(sockets.map(\.pid))
+        procCache = procCache.filter { alive.contains($0.key) }
+        cacheLock.unlock()
+        return (dirs, guesses)
+    }
 
     private static func background<T>(_ work: @escaping () -> T) async -> T {
         await withCheckedContinuation { cont in
@@ -254,6 +295,41 @@ enum PortScanner {
         config.connectionProxyDictionary = [:] // never route localhost through a proxy
         return URLSession(configuration: config)
     }()
+
+    /// A live server's page rarely changes frame to frame, but scanning every 4s refetched
+    /// up to 48KB of HTML per port. Healthy probes are reused for this long; failing ones are
+    /// retried every scan so recovery stays fast. Entry ids carry the pid, so a restart misses.
+    static let probeTTL: TimeInterval = 30
+    private static var probeCache: [String: (at: Date, result: ProbeResult)] = [:]
+
+    private static func probeAll(_ entries: [ServerEntry]) async -> [String: ProbeResult] {
+        let now = Date()
+        var out: [String: ProbeResult] = [:]
+        var stale: [ServerEntry] = []
+        for e in entries {
+            if let c = probeCache[e.id], c.result.state != .offline, now.timeIntervalSince(c.at) < probeTTL {
+                out[e.id] = c.result
+            } else {
+                stale.append(e)
+            }
+        }
+        let fresh = await withTaskGroup(of: (String, ProbeResult).self) { group in
+            for e in stale {
+                group.addTask { (e.id, await probe(e)) }
+            }
+            var res: [String: ProbeResult] = [:]
+            for await (id, r) in group { res[id] = r }
+            return res
+        }
+        for (id, r) in fresh { probeCache[id] = (now, r) }
+        let alive = Set(entries.map(\.id))
+        probeCache = probeCache.filter { alive.contains($0.key) }
+        out.merge(fresh) { _, new in new }
+        return out
+    }
+
+    /// Drops cached probe results so the next scan re-probes everything (manual Refresh).
+    static func resetProbeCache() { probeCache.removeAll() }
 
     private static func probe(_ entry: ServerEntry) async -> ProbeResult {
         if nonHTTPPorts.contains(entry.port) { return ProbeResult(state: .offline) }

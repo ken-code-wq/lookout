@@ -19,6 +19,13 @@ enum AgentOpenCodeReader {
         var maxUpdated: [String: Int64] = [:]
         var legacy: [String: (stamp: AgentFileStamp, record: OpenCodeUsageRecord?)] = [:]
         var historyDays = 0
+        /// Database and WAL stamps at the last full read. While they hold, nothing in the store changed and the
+        /// queries are skipped: on a large install each one walks a table of hundreds of megabytes.
+        var databaseStamps: [String: AgentFileStamp] = [:]
+        var sessions: [String: SessionRow] = [:]
+        var warnings: [String] = []
+        /// Last pass that walked every message changed since the cursor, rather than only changed sessions' messages.
+        var fullScanAt = Date.distantPast
         let lock = NSLock()
     }
 
@@ -34,6 +41,7 @@ enum AgentOpenCodeReader {
             // A longer window needs rows the incremental cursor already skipped.
             cache.records.removeAll()
             cache.maxUpdated.removeAll()
+            cache.databaseStamps.removeAll()
         }
         cache.historyDays = historyDays
         cache.records = cache.records.filter { $0.value.timestamp >= cutoff }
@@ -44,22 +52,46 @@ enum AgentOpenCodeReader {
         let databases = ((try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? [])
             .filter { $0.hasPrefix("opencode") && $0.hasSuffix(".db") }
             .sorted { $0 == "opencode.db" ? true : ($1 == "opencode.db" ? false : $0 < $1) }
+        var stamps: [String: AgentFileStamp] = [:]
         for name in databases {
-            found = true
             let path = root.appendingPathComponent(name).path
-            guard let database = AgentSQLiteDatabase(path: path) else {
-                warnings.append("OpenCode database \(name) could not be opened")
-                continue
+            for file in [path, path + "-wal"] {
+                if let stamp = AgentFileScanner.stamp(for: URL(fileURLWithPath: file)) { stamps[file] = stamp }
             }
-            let tables = database.tables()
-            if tables.contains("session") {
-                readSessions(database, cutoffMs: cutoffMs, into: &sessions)
-            }
-            for table in ["message", "session_message"] where tables.contains(table) {
-                if !readMessages(database, table: table, key: "\(path)|\(table)", cutoffMs: cutoffMs) {
-                    warnings.append("OpenCode \(table) history could not be read")
+        }
+        if !databases.isEmpty, stamps == cache.databaseStamps, !cache.records.isEmpty || !cache.sessions.isEmpty {
+            found = true
+            sessions = cache.sessions.filter { $0.value.updated >= cutoff }
+            warnings = cache.warnings
+        } else {
+            for name in databases {
+                found = true
+                let path = root.appendingPathComponent(name).path
+                guard let database = AgentSQLiteDatabase(path: path) else {
+                    warnings.append("OpenCode database \(name) could not be opened")
+                    continue
                 }
+                let tables = database.tables()
+                var own: [String: SessionRow] = [:]
+                if tables.contains("session") {
+                    readSessions(database, cutoffMs: cutoffMs, into: &own)
+                    sessions.merge(own) { $1 }
+                }
+                // A write bumps its session's `time_updated`, so only sessions that moved need their messages
+                // read, through the (session_id, time_created) index instead of a walk of the whole table.
+                // Every ten minutes a full pass catches anything that slipped past that.
+                let full = cache.sessions.isEmpty || now.timeIntervalSince(cache.fullScanAt) > 600
+                let changed = full ? nil : Set(own.values.filter { cache.sessions[$0.id]?.updated != $0.updated }.map(\.id))
+                for table in ["message", "session_message"] where tables.contains(table) {
+                    if !readMessages(database, table: table, key: "\(path)|\(table)", cutoffMs: cutoffMs, onlySessions: changed) {
+                        warnings.append("OpenCode \(table) history could not be read")
+                    }
+                }
+                if full { cache.fullScanAt = now }
             }
+            cache.databaseStamps = stamps
+            cache.sessions = sessions
+            cache.warnings = warnings
         }
         found = readLegacy(root: root, cutoff: cutoff) || found
         guard found else { return AgentArtifactResult() }
@@ -134,7 +166,7 @@ enum AgentOpenCodeReader {
         return AgentDiscovery.dataURLs(for: .openCode)[0]
     }
 
-    private struct SessionRow {
+    fileprivate struct SessionRow {
         var id: String
         var directory: String
         var title: String
@@ -165,24 +197,34 @@ enum AgentOpenCodeReader {
     }
 
     /// Incremental by `time_updated`: only rows changed since the previous pass are parsed.
-    private static func readMessages(_ database: AgentSQLiteDatabase, table: String, key: String, cutoffMs: Int64) -> Bool {
+    private static func readMessages(_ database: AgentSQLiteDatabase, table: String, key: String, cutoffMs: Int64,
+                                     onlySessions: Set<String>?) -> Bool {
         let columns = database.columns(of: table)
         guard columns.isSuperset(of: ["id", "data"]) else { return false }
         let sessionColumn = columns.contains("session_id") ? "session_id" : "''"
+        let sessionFilter = sessionColumn == "session_id" ? onlySessions : nil
+        if let sessionFilter, sessionFilter.isEmpty { return true }
         let createdColumn = columns.contains("time_created") ? "time_created" : "NULL"
         let updatedColumn = columns.contains("time_updated") ? "time_updated" : "NULL"
-        var predicates = ["instr(data, '\"assistant\"') > 0"]
+        // Cheap integer tests first: SQLite checks terms in order, and `data` lives in overflow pages that are only
+        // read when a row gets as far as the `instr`. With it first, every pass read every message's JSON from disk.
+        var predicates: [String] = []
         var bindings: [AgentSQLiteDatabase.Binding] = []
-        if table == "session_message", columns.contains("type") { predicates.append("type = 'assistant'") }
-        if createdColumn != "NULL" {
-            predicates.append("\(createdColumn) >= ?")
-            bindings.append(.int(cutoffMs))
+        if let sessionFilter {
+            predicates.append("session_id IN (\(Array(repeating: "?", count: sessionFilter.count).joined(separator: ", ")))")
+            bindings.append(contentsOf: sessionFilter.sorted().map { .text($0) })
         }
         let since = cache.maxUpdated[key] ?? -1
         if updatedColumn != "NULL" {
             predicates.append("\(updatedColumn) > ?")
             bindings.append(.int(since))
         }
+        if createdColumn != "NULL" {
+            predicates.append("\(createdColumn) >= ?")
+            bindings.append(.int(cutoffMs))
+        }
+        if table == "session_message", columns.contains("type") { predicates.append("type = 'assistant'") }
+        predicates.append("instr(data, '\"assistant\"') > 0")
         var newest = since
         let ok = database.query(
             "SELECT id, \(sessionColumn), \(createdColumn), \(updatedColumn), data FROM \(table) WHERE \(predicates.joined(separator: " AND "))",
@@ -195,7 +237,8 @@ enum AgentOpenCodeReader {
                 cache.records[id] = record
             }
         }
-        if ok { cache.maxUpdated[key] = newest }
+        // Only a full pass moves the cursor, so the next one still covers messages in sessions a filtered pass skipped.
+        if ok && sessionFilter == nil { cache.maxUpdated[key] = newest }
         return ok
     }
 

@@ -8,7 +8,7 @@ enum ParsingChecks {
         checkPricing()
         checkClaude()
         checkCodex()
-        print("Local Observer parsing checks passed")
+        print("Lookout parsing checks passed")
     }
 
     private static func close(_ lhs: Double?, _ rhs: Double, _ message: String) {

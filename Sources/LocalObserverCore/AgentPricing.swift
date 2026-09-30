@@ -7,6 +7,12 @@ import Foundation
 /// variants (`above_200k`, flex, priority, batch) are ignored: transcripts do not record
 /// which tier served a request, so everything is priced at the base tier.
 public enum AgentPricing {
+    /// Model ids repeat across every event of every session; the normalization regexes are
+    /// far more expensive than the dictionary they pay into.
+    private static let memoLock = NSLock()
+    private static var priceMemo: [String: ModelRate?] = [:]
+    private static var normalizeMemo: [String: String] = [:]
+
     /// USD per million tokens.
     public struct ModelRate: Hashable, Sendable {
         public var input: Double
@@ -28,6 +34,21 @@ public enum AgentPricing {
 
     /// Rate for a model id as written by an agent, or nil when the model is unpriced.
     public static func price(model: String) -> ModelRate? {
+        memoLock.lock()
+        if let hit = priceMemo[model] {
+            memoLock.unlock()
+            return hit
+        }
+        memoLock.unlock()
+        let rate = computePrice(model: model)
+        memoLock.lock()
+        if priceMemo.count > 512 { priceMemo.removeAll() }
+        priceMemo[model] = rate
+        memoLock.unlock()
+        return rate
+    }
+
+    private static func computePrice(model: String) -> ModelRate? {
         let key = normalize(model)
         guard !key.isEmpty, !unpriceable.contains(key) else { return nil }
         if isFreeModel(model) { return ModelRate(input: 0, output: 0, cacheRead: 0, cacheWrite: 0) }
@@ -69,6 +90,21 @@ public enum AgentPricing {
     /// Lowercases, drops provider prefixes (`anthropic/`, `openai/`, `vercel/anthropic/`),
     /// bracketed variants (`[1m]`), `:free`/`-free` tags, and dotted Claude versions (`claude-haiku-4.5`).
     public static func normalize(_ model: String) -> String {
+        memoLock.lock()
+        if let hit = normalizeMemo[model] {
+            memoLock.unlock()
+            return hit
+        }
+        memoLock.unlock()
+        let key = computeNormalize(model)
+        memoLock.lock()
+        if normalizeMemo.count > 512 { normalizeMemo.removeAll() }
+        normalizeMemo[model] = key
+        memoLock.unlock()
+        return key
+    }
+
+    private static func computeNormalize(_ model: String) -> String {
         var key = model.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if let bracket = key.firstIndex(of: "[") { key = String(key[..<bracket]) }
         if let slash = key.lastIndex(of: "/") { key = String(key[key.index(after: slash)...]) }

@@ -1,4 +1,5 @@
 import SwiftUI
+import Carbon.HIToolbox
 import UserNotifications
 import LocalObserverCore
 
@@ -12,6 +13,10 @@ struct AgentSettingsView: View {
                 .tabItem { Label("Agents", systemImage: "sparkles") }
             LimitsPane(store: store)
                 .tabItem { Label("Limits", systemImage: "gauge.with.dots.needle.33percent") }
+            MenuBarDockPane()
+                .tabItem { Label("Menu Bar & Notch", systemImage: "menubar.dock.rectangle") }
+            ShelfSettingsPane()
+                .tabItem { Label("Shelf", systemImage: "tray.full") }
             GeneralPane(store: store)
                 .tabItem { Label("General", systemImage: "gearshape") }
         }
@@ -25,7 +30,7 @@ private struct AgentsPane: View {
     @ObservedObject var store: AgentStore
 
     var body: some View {
-        SettingsPage(title: "Agents", message: "Local Observer watches the agents you turn on here. It reads their session files and running processes on this Mac, and never changes them.") {
+        SettingsPage(title: "Agents", message: "Lookout watches the agents you turn on here. It reads their session files and running processes on this Mac, and never changes them.") {
             SettingsGroup {
                 ForEach(Array(AgentKind.allCases.enumerated()), id: \.element) { index, agent in
                     AgentToggleRow(store: store, agent: agent)
@@ -92,7 +97,7 @@ private struct LimitsPane: View {
     private var agents: [AgentKind] { AgentKind.allCases.filter(AgentLimitClients.supportsAccountLimits) }
 
     var body: some View {
-        SettingsPage(title: "Plan limits", message: "Connecting an agent lets Local Observer ask the provider for your current 5-hour, weekly, and monthly usage, using the sign-in that agent already has on this Mac. Tokens are read when needed and never stored.") {
+        SettingsPage(title: "Plan limits", message: "Connecting an agent lets Lookout ask the provider for your current 5-hour, weekly, and monthly usage, using the sign-in that agent already has on this Mac. Tokens are read when needed and never stored.") {
             SettingsGroup {
                 ForEach(Array(agents.enumerated()), id: \.element) { index, agent in
                     HStack(alignment: .top, spacing: 12) {
@@ -129,8 +134,395 @@ private struct LimitsPane: View {
     }
 }
 
+private struct MenuBarDockPane: View {
+    @ObservedObject var prefs = Preferences.shared
+
+    private var notchDetail: String {
+        if NSScreen.screens.contains(where: { $0.safeAreaInsets.top > 0 }) { return "Agents, usage, and limits around the camera notch" }
+        return "No display with a notch is connected right now"
+    }
+
+    var body: some View {
+        SettingsPage(title: "Menu Bar, Dock & Notch", message: "Choose what Lookout shows outside its window. Changes apply immediately.") {
+            Text("Menu bar title").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.bottom, 8)
+            SettingsGroup {
+                ForEach(Array(MenuBarItem.allCases.enumerated()), id: \.element) { index, item in
+                    HStack(spacing: 12) {
+                        Image(systemName: item.symbol).frame(width: 18).foregroundStyle(N.text2)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.title).font(NFont.body).foregroundStyle(N.text)
+                            Text(item.detail).font(NFont.caption).foregroundStyle(N.text2)
+                        }
+                        Spacer(minLength: 12)
+                        Toggle(item.title, isOn: Binding(
+                            get: { prefs.menuBarItems.contains(item) },
+                            set: { prefs.toggle(item, on: $0) }
+                        ))
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    if index < MenuBarItem.allCases.count - 1 { SettingsDivider() }
+                }
+            }
+
+            Text("Menu bar panel").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.top, 22).padding(.bottom, 8)
+            SettingsGroup {
+                ForEach(Array(prefs.menuSections.enumerated()), id: \.element) { index, section in
+                    HStack(spacing: 10) {
+                        Image(systemName: section.symbol).frame(width: 18).foregroundStyle(N.text2)
+                        Text(section.title).font(NFont.body).foregroundStyle(prefs.isVisible(section) ? N.text : N.text3)
+                        Spacer(minLength: 12)
+                        IconButton(symbol: "chevron.up", help: "Move up") { withAnimation(.snappy) { prefs.move(section, by: -1) } }
+                            .disabled(index == 0)
+                        IconButton(symbol: "chevron.down", help: "Move down") { withAnimation(.snappy) { prefs.move(section, by: 1) } }
+                            .disabled(index == prefs.menuSections.count - 1)
+                        Toggle(section.title, isOn: Binding(
+                            get: { prefs.isVisible(section) },
+                            set: { prefs.setVisible(section, $0) }
+                        ))
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    if index < prefs.menuSections.count - 1 { SettingsDivider() }
+                }
+            }
+
+            Text("Dock").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.top, 22).padding(.bottom, 8)
+            SettingsGroup {
+                SettingsRow(title: "Show in Dock", detail: "Off keeps Lookout in the menu bar only") {
+                    Toggle("Show in Dock", isOn: $prefs.showDockIcon).toggleStyle(.switch).labelsHidden()
+                }
+                SettingsDivider()
+                SettingsRow(title: "Dock icon", detail: "Agent Peek draws a limit ring and a running-agent pill on the icon") {
+                    Picker("Dock icon", selection: $prefs.dockIconStyle) {
+                        ForEach(DockIconStyle.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .labelsHidden().fixedSize()
+                }
+                SettingsDivider()
+                SettingsRow(title: "Badge", detail: "Red number on the Dock icon") {
+                    Picker("Badge", selection: $prefs.dockBadge) {
+                        ForEach(DockBadge.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .labelsHidden().fixedSize()
+                }
+            }
+            Text("Right-click the Dock icon to jump to a running agent, open a server, or toggle Agent Peek.")
+                .font(NFont.caption).foregroundStyle(N.text3).padding(.top, 6)
+
+            Text("Keyboard shortcuts").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.top, 22).padding(.bottom, 8)
+            SettingsGroup {
+                ShortcutRow(action: .menuBar, title: "Open menu bar panel", detail: "Drops down the Lookout panel from any app")
+                SettingsDivider()
+                ShortcutRow(action: .notch, title: "Open the notch", detail: "Drops the notch dashboard down from any app")
+                SettingsDivider()
+                ShortcutRow(action: .peek, title: "Toggle Agent Peek", detail: "Shows or hides the floating panel from any app")
+                SettingsDivider()
+                ShortcutRow(action: .shelf, title: "Open clipboard history", detail: "Opens the Shelf in the notch, ready to search")
+            }
+            Text("These work everywhere, even when another app is in front. Press one again to close.")
+                .font(NFont.caption).foregroundStyle(N.text3).padding(.top, 6)
+
+            Text("Notch").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.top, 22).padding(.bottom, 8)
+            SettingsGroup {
+                SettingsRow(title: "Show in the notch", detail: notchDetail) {
+                    Toggle("Show in the notch", isOn: $prefs.notchEnabled).toggleStyle(.switch).labelsHidden()
+                }
+                SettingsDivider()
+                SettingsRow(title: "Displays without a notch", detail: "Draw a notch-shaped pill at the top of the main display") {
+                    Toggle("Displays without a notch", isOn: $prefs.notchOnPlainDisplays).toggleStyle(.switch).labelsHidden()
+                }
+                .disabled(!prefs.notchEnabled)
+                SettingsDivider()
+                SettingsRow(title: "Width", detail: "Closed wings, the open panel, and the virtual notch") {
+                    HStack(spacing: 8) {
+                        Slider(value: $prefs.notchWidth, in: 0.8...1.3, step: 0.05)
+                            .frame(width: 150)
+                        Text("\(Int((prefs.notchWidth * 100).rounded()))%")
+                            .font(NFont.small).monospacedDigit().foregroundStyle(N.text2)
+                            .frame(width: 38, alignment: .trailing)
+                    }
+                }
+                .disabled(!prefs.notchEnabled)
+                SettingsDivider()
+                SettingsRow(title: "Left of the notch", detail: "Shown while the notch is closed") {
+                    Picker("Left of the notch", selection: $prefs.notchLeft) {
+                        ForEach(NotchWing.allCases) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden().fixedSize()
+                }
+                .disabled(!prefs.notchEnabled)
+                SettingsDivider()
+                SettingsRow(title: "Right of the notch", detail: "Shown while the notch is closed") {
+                    Picker("Right of the notch", selection: $prefs.notchRight) {
+                        ForEach(NotchWing.allCases) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden().fixedSize()
+                }
+                .disabled(!prefs.notchEnabled)
+                SettingsDivider()
+                SettingsRow(title: "Open on hover", detail: "Off opens it with a click instead") {
+                    Toggle("Open on hover", isOn: $prefs.notchHoverToOpen).toggleStyle(.switch).labelsHidden()
+                }
+                .disabled(!prefs.notchEnabled)
+                SettingsDivider()
+                SettingsRow(title: "Drop down when an agent needs you", detail: "Shows the project and what it's waiting on for a few seconds") {
+                    Toggle("Drop down when an agent needs you", isOn: $prefs.notchAlerts).toggleStyle(.switch).labelsHidden()
+                }
+                .disabled(!prefs.notchEnabled)
+                SettingsDivider()
+                SettingsRow(title: "…and when an agent finishes", detail: "A working session hands the turn back to you") {
+                    Toggle("…and when an agent finishes", isOn: $prefs.notchFinishedAlerts).toggleStyle(.switch).labelsHidden()
+                }
+                .disabled(!prefs.notchEnabled || !prefs.notchAlerts)
+                SettingsDivider()
+                SettingsRow(title: "Volume and brightness", detail: "Key presses show a level bar in the notch") {
+                    Toggle("Volume and brightness", isOn: $prefs.notchHUD).toggleStyle(.switch).labelsHidden()
+                }
+                .disabled(!prefs.notchEnabled)
+                SettingsDivider()
+                SettingsRow(title: "Haptic feedback", detail: "A light tap on Force Touch trackpads when the notch reacts") {
+                    Toggle("Haptic feedback", isOn: $prefs.notchHaptics).toggleStyle(.switch).labelsHidden()
+                }
+                .disabled(!prefs.notchEnabled)
+            }
+            Text("Music controls work with Spotify and Apple Music. macOS asks once before Lookout can control each player.")
+                .font(NFont.caption).foregroundStyle(N.text3).padding(.top, 6)
+
+            Text("Plan limits at a glance").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.top, 22).padding(.bottom, 8)
+            SettingsGroup {
+                ForEach(Array(AgentKind.allCases.filter(AgentLimitClients.supportsAccountLimits).enumerated()), id: \.element) { index, agent in
+                    if index > 0 { SettingsDivider() }
+                    HStack(spacing: 12) {
+                        AgentIconView(agent: agent, size: 18)
+                        Text(agent.name).font(NFont.body).foregroundStyle(N.text)
+                        Spacer(minLength: 12)
+                        if let position = prefs.limitProviders.firstIndex(of: agent), prefs.limitProviders.count > 1 {
+                            Text("Arc \(position + 1)").font(NFont.caption).foregroundStyle(N.text3)
+                        }
+                        Toggle(agent.name, isOn: Binding(
+                            get: { prefs.limitProviders.contains(agent) },
+                            set: { _ in prefs.toggleLimitProvider(agent) }
+                        ))
+                        .toggleStyle(.switch).labelsHidden()
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                }
+                SettingsDivider()
+                SettingsRow(title: "Window per provider", detail: prefs.limitWindowChoice.detail) {
+                    Picker("Window per provider", selection: $prefs.limitWindowChoice) {
+                        ForEach(LimitWindowChoice.allCases) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden().fixedSize()
+                }
+            }
+            Text(prefs.limitProviders.isEmpty
+                 ? "None chosen: the notch, menu bar, and Dock show whichever limit is closest to running out."
+                 : "With two or more, the closed notch shows a ring split into one arc per provider, each filled to its usage.")
+                .font(NFont.caption).foregroundStyle(N.text3).padding(.top, 6)
+
+            Text("Agent Peek").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.top, 22).padding(.bottom, 8)
+            SettingsGroup {
+                SettingsRow(title: "Floating panel", detail: "Always-on-top glance at running agents") {
+                    Toggle("Floating panel", isOn: Binding(
+                        get: { prefs.peekVisible },
+                        set: { $0 ? LiveSurfaces.shared.showPeek() : LiveSurfaces.shared.hidePeek() }
+                    ))
+                    .toggleStyle(.switch).labelsHidden()
+                }
+                SettingsDivider()
+                SettingsRow(title: "Show on every Space", detail: "Follows you across desktops and full-screen apps") {
+                    Toggle("Show on every Space", isOn: $prefs.peekOnAllSpaces).toggleStyle(.switch).labelsHidden()
+                }
+                SettingsDivider()
+                SettingsRow(title: "Size", detail: "Small keeps one line per agent and limit. The L, M, S button in Peek switches too.") {
+                    Picker("Size", selection: $prefs.peekSize) {
+                        ForEach(PeekSize.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented).labelsHidden().fixedSize()
+                }
+                SettingsDivider()
+                SettingsRow(title: "Small shows", detail: prefs.peekSmallProviders.isEmpty
+                            ? "The 5-hour window of every provider that has one"
+                            : "The 5-hour window of the providers you tick") {
+                    HStack(spacing: 10) {
+                        ForEach(AgentKind.allCases.filter(AgentLimitClients.supportsAccountLimits)) { agent in
+                            Toggle(isOn: Binding(get: { prefs.peekSmallProviders.contains(agent) },
+                                                 set: { _ in prefs.toggleSmallPeekProvider(agent) })) {
+                                Text(agent.shortName).font(NFont.small)
+                            }
+                            .toggleStyle(.checkbox)
+                        }
+                    }
+                }
+                SettingsDivider()
+                SettingsRow(title: "Include limits", detail: "The three plan windows closest to running out") {
+                    Toggle("Include limits", isOn: $prefs.peekShowsLimits).toggleStyle(.switch).labelsHidden()
+                }
+                SettingsDivider()
+                SettingsRow(title: "Glass", detail: "Clear shows more of what's behind; frosted is easier to read on busy backgrounds") {
+                    Picker("Glass", selection: $prefs.peekClearGlass) {
+                        Text("Clear").tag(true)
+                        Text("Frosted").tag(false)
+                    }
+                    .pickerStyle(.segmented).labelsHidden().fixedSize()
+                }
+            }
+            if !prefs.peekHiddenAgents.isEmpty {
+                HStack(spacing: 6) {
+                    Text("Hidden in Peek: \(prefs.peekHiddenAgents.sorted { $0.name < $1.name }.map(\.name).joined(separator: ", "))")
+                    Button("Show all") { prefs.peekHiddenAgents = [] }.buttonStyle(.link)
+                }
+                .font(NFont.caption).foregroundStyle(N.text3).padding(.top, 6)
+            }
+        }
+    }
+}
+
+/// Records a system-wide shortcut and suggests combinations nothing else on this Mac uses.
+private struct ShortcutRow: View {
+    var action: HotKeyAction
+    var title: String
+    var detail: String
+    @ObservedObject var prefs = Preferences.shared
+    @State private var recording = false
+    @State private var monitor: Any?
+    @State private var conflict: HotKeyConflict?
+    @State private var showFinder = false
+    @State private var suggestions: [HotKey] = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SettingsRow(title: title, detail: detail) {
+                HStack(spacing: 6) {
+                    Button(action: toggleRecording) {
+                        Text(recording ? "Type a shortcut…" : (current?.display ?? "None"))
+                            .font(.system(size: 12.5, weight: .medium, design: recording ? .default : .rounded))
+                            .foregroundStyle(recording ? N.blue : (current == nil ? N.text3 : N.text))
+                            .frame(minWidth: 96)
+                            .padding(.horizontal, 8)
+                            .frame(height: 24)
+                            .background(N.bg, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .strokeBorder(recording ? N.blue : N.pressed, lineWidth: recording ? 1.5 : 1))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(recording ? "Press Esc to cancel, Delete to clear" : "Click, then press the new shortcut")
+                    if current != nil && !recording {
+                        IconButton(symbol: "xmark.circle.fill", help: "Remove shortcut", tint: N.text3) {
+                            setKey(nil)
+                            conflict = nil
+                        }
+                    }
+                    Button {
+                        suggestions = GlobalHotKeys.shared.suggestions(for: action)
+                        showFinder = true
+                    } label: {
+                        Label("Find", systemImage: "sparkle.magnifyingglass")
+                    }
+                    .controlSize(.small)
+                    .help("Check this Mac for free shortcuts")
+                    .popover(isPresented: $showFinder, arrowEdge: .bottom) { finder }
+                }
+            }
+            if let conflict {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(TagColor.orange.fg)
+                    Text(conflict.message).foregroundStyle(N.text2)
+                }
+                .font(NFont.caption)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 10)
+            }
+        }
+        .onAppear { conflict = current.flatMap { GlobalHotKeys.shared.conflict(for: $0, action: action) } }
+        .onDisappear { stopRecording() }
+    }
+
+    private var finder: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Free shortcuts").font(NFont.bodyMedium).foregroundStyle(N.text)
+                Text("Checked against macOS shortcuts, your App Shortcuts, and global shortcuts other running apps have claimed.")
+                    .font(NFont.caption).foregroundStyle(N.text2).fixedSize(horizontal: false, vertical: true)
+            }
+            if suggestions.isEmpty {
+                Text("Nothing free found. Record your own instead.").font(NFont.caption).foregroundStyle(N.text3)
+            } else {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
+                    ForEach(suggestions) { key in
+                        let isCurrent = key == current
+                        Button {
+                            setKey(key)
+                            conflict = nil
+                            showFinder = false
+                        } label: {
+                            Text(key.display)
+                                .font(.system(size: 12.5, weight: .medium, design: .rounded))
+                                .foregroundStyle(isCurrent ? .white : N.text)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 28)
+                                .background(isCurrent ? N.blue : N.hover, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help(isCurrent ? "Current shortcut" : "Use \(key.display)")
+                    }
+                }
+            }
+            Text("Apps that only handle a shortcut while they're in front aren't visible to this check. Pick one with ⌃ or several modifiers to stay clear of them.")
+                .font(NFont.caption).foregroundStyle(N.text3).fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(width: 300)
+    }
+
+    private var current: HotKey? { prefs.hotKey(for: action) }
+    private func setKey(_ key: HotKey?) { prefs.setHotKey(key, for: action) }
+
+    private func toggleRecording() {
+        recording ? stopRecording() : startRecording()
+    }
+
+    private func startRecording() {
+        recording = true
+        conflict = nil
+        GlobalHotKeys.shared.suspend()
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let flags = event.modifierFlags.intersection(HotKey.relevant)
+            if flags.isEmpty && Int(event.keyCode) == kVK_Escape { stopRecording(); return nil }
+            if flags.isEmpty && (Int(event.keyCode) == kVK_Delete || Int(event.keyCode) == kVK_ForwardDelete) {
+                setKey(nil)
+                stopRecording()
+                return nil
+            }
+            let key = HotKey(keyCode: UInt32(event.keyCode), modifiers: flags)
+            guard key.isUsable else { NSSound.beep(); return nil }
+            setKey(key)
+            stopRecording()
+            conflict = GlobalHotKeys.shared.conflict(for: key, action: action)
+            return nil
+        }
+    }
+
+    private func stopRecording() {
+        guard recording else { return }
+        recording = false
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        GlobalHotKeys.shared.resume()
+    }
+}
+
 private struct GeneralPane: View {
     @ObservedObject var store: AgentStore
+    @ObservedObject private var prefs = Preferences.shared
     @State private var notificationsDenied = false
 
     var body: some View {
@@ -149,6 +541,15 @@ private struct GeneralPane: View {
                     }
                     .labelsHidden()
                     .fixedSize()
+                }
+            }
+            Text("Power").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.top, 22).padding(.bottom, 8)
+            SettingsGroup {
+                SettingsRow(title: "Keep this Mac awake", detail: "Stops idle sleep so long agent runs aren't interrupted. The display can still sleep.") {
+                    Picker("Keep this Mac awake", selection: $prefs.keepAwake) {
+                        ForEach(KeepAwakeMode.allCases) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden().fixedSize()
                 }
             }
             Text("Notifications").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.top, 22).padding(.bottom, 8)
@@ -181,9 +582,33 @@ private struct GeneralPane: View {
                     .labelsHidden()
                     .fixedSize()
                 }
+                SettingsDivider()
+                SettingsRow(title: "When a limit will run out early", detail: "At your current rate, a window empties before it resets") {
+                    Toggle("When a limit will run out early", isOn: Binding(
+                        get: { prefs.notifyPace },
+                        set: { prefs.notifyPace = $0; if $0 { requestPermission() } }
+                    ))
+                    .toggleStyle(.switch).labelsHidden()
+                }
+                SettingsDivider()
+                SettingsRow(title: "When a used-up limit resets", detail: "Also drops down from the notch, so you know you can start again") {
+                    Toggle("When a used-up limit resets", isOn: Binding(
+                        get: { prefs.notifyReset },
+                        set: { prefs.notifyReset = $0; if $0 { requestPermission() } }
+                    ))
+                    .toggleStyle(.switch).labelsHidden()
+                }
+                SettingsDivider()
+                SettingsRow(title: "When an agent finishes", detail: "A working session hands the turn back to you") {
+                    Toggle("When an agent finishes", isOn: Binding(
+                        get: { prefs.notifyFinished },
+                        set: { prefs.notifyFinished = $0; if $0 { requestPermission() } }
+                    ))
+                    .toggleStyle(.switch).labelsHidden()
+                }
             }
             if notificationsDenied {
-                Text("Notifications are turned off for Local Observer in System Settings.")
+                Text("Notifications are turned off for Lookout in System Settings.")
                     .font(NFont.caption).foregroundStyle(TagColor.orange.fg).padding(.top, 8)
             } else if !AgentNotifier.isAvailable {
                 Text("Notifications need the packaged app. Build it with packaging/build-app.sh.")
@@ -335,7 +760,7 @@ private struct SetupAgentTile: View {
 
 // MARK: - Settings layout pieces
 
-private struct SettingsPage<Content: View>: View {
+struct SettingsPage<Content: View>: View {
     var title: String
     var message: String?
     @ViewBuilder var content: Content
@@ -361,7 +786,7 @@ private struct SettingsPage<Content: View>: View {
     }
 }
 
-private struct SettingsGroup<Content: View>: View {
+struct SettingsGroup<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
@@ -371,11 +796,11 @@ private struct SettingsGroup<Content: View>: View {
     }
 }
 
-private struct SettingsDivider: View {
+struct SettingsDivider: View {
     var body: some View { Rectangle().fill(N.divider).frame(height: 1).padding(.leading, 14) }
 }
 
-private struct SettingsRow<Control: View>: View {
+struct SettingsRow<Control: View>: View {
     var title: String
     var detail: String
     @ViewBuilder var control: Control

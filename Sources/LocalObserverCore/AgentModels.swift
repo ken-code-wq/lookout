@@ -668,6 +668,38 @@ public enum AgentDateRange: Int, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// Short periods offered by the menu bar and notch charts.
+public enum AgentGlanceRange: String, CaseIterable, Identifiable, Sendable {
+    case last24h, today, week, month
+
+    public var id: String { rawValue }
+    public var title: String {
+        switch self {
+        case .last24h: return "24h"
+        case .today: return "Today"
+        case .week: return "7d"
+        case .month: return "30d"
+        }
+    }
+    public var longTitle: String {
+        switch self {
+        case .last24h: return "Last 24 hours"
+        case .today: return "Today"
+        case .week: return "Last 7 days"
+        case .month: return "Last 30 days"
+        }
+    }
+
+    public func apply(to filter: inout AgentUsageFilter) {
+        switch self {
+        case .last24h: filter.setRolling(hours: 24)
+        case .today: filter.setPreset(.today)
+        case .week: filter.setPreset(.sevenDays)
+        case .month: filter.setPreset(.thirtyDays)
+        }
+    }
+}
+
 public enum AgentMetricKind: String, CaseIterable, Identifiable, Sendable {
     case tokens = "Tokens"
     case cost = "Cost"
@@ -695,9 +727,82 @@ public struct AgentUsageFilter: Hashable, Sendable {
     public var metric: AgentMetricKind = .tokens
     public var grouping: AgentUsageGrouping = .model
 
+    /// Inclusive start and end days. Overrides `range` when set.
+    public var customStart: Date?
+    public var customEnd: Date?
+    /// Rolling window ending now, charted by hour ("Last 24 hours"). Overrides `range` when set.
+    public var rollingHours: Int?
+
     public init() {}
 
     public var isNarrowed: Bool { !agents.isEmpty || !projects.isEmpty || !models.isEmpty }
+
+    public var isCustom: Bool { customStart != nil && customEnd != nil }
+    public var isRolling: Bool { rollingHours != nil }
+
+    public mutating func setCustom(from start: Date, to end: Date, calendar: Calendar = .current) {
+        let a = calendar.startOfDay(for: min(start, end)), b = calendar.startOfDay(for: max(start, end))
+        customStart = a
+        customEnd = b
+        rollingHours = nil
+    }
+
+    public mutating func setPreset(_ preset: AgentDateRange) {
+        range = preset
+        customStart = nil
+        customEnd = nil
+        rollingHours = nil
+    }
+
+    /// Up to 24 hours ending now, bucketed by hour.
+    public mutating func setRolling(hours: Int = 24) {
+        rollingHours = min(max(hours, 1), 24)
+        customStart = nil
+        customEnd = nil
+    }
+
+    /// First instant of the period.
+    public func periodStart(now: Date = .now, calendar: Calendar = .current) -> Date {
+        if let rollingHours {
+            let hour = calendar.dateInterval(of: .hour, for: now)?.start ?? now
+            return calendar.date(byAdding: .hour, value: -(rollingHours - 1), to: hour) ?? hour
+        }
+        if isCustom, let customStart { return calendar.startOfDay(for: customStart) }
+        return range.start(now: now, calendar: calendar)
+    }
+
+    /// Exclusive end of the period.
+    public func periodEnd(now: Date = .now, calendar: Calendar = .current) -> Date {
+        if isCustom, let customEnd {
+            return calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: customEnd)) ?? now
+        }
+        return .distantFuture
+    }
+
+    /// One-day periods chart by hour.
+    public func isHourly(calendar: Calendar = .current) -> Bool {
+        if isRolling { return true }
+        if isCustom, let customStart, let customEnd { return calendar.isDate(customStart, inSameDayAs: customEnd) }
+        return range == .today
+    }
+
+    public func periodTitle(calendar: Calendar = .current) -> String {
+        if let rollingHours { return "Last \(rollingHours) hours" }
+        guard isCustom, let customStart, let customEnd else { return range.title }
+        if calendar.isDate(customStart, inSameDayAs: customEnd) {
+            return customStart.formatted(.dateTime.month(.abbreviated).day().year())
+        }
+        let sameYear = calendar.component(.year, from: customStart) == calendar.component(.year, from: customEnd)
+        let startText = sameYear ? customStart.formatted(.dateTime.month(.abbreviated).day())
+                                 : customStart.formatted(.dateTime.month(.abbreviated).day().year())
+        return "\(startText) – \(customEnd.formatted(.dateTime.month(.abbreviated).day().year()))"
+    }
+
+    public func periodPhrase(calendar: Calendar = .current) -> String {
+        if let rollingHours { return "in the last \(rollingHours) hours" }
+        guard isCustom, let customStart, let customEnd else { return range.phrase }
+        return calendar.isDate(customStart, inSameDayAs: customEnd) ? "on \(periodTitle(calendar: calendar))" : "from \(periodTitle(calendar: calendar))"
+    }
 }
 
 /// Token, cost, and request totals for any slice of usage events.

@@ -178,21 +178,18 @@ enum AgentFileScanner {
 }
 
 /// Memoizes `AgentDiscovery.projectName(for:)`, which walks the filesystem.
+/// Storage is process-wide: readers each hold their own instance per scan, and a fresh
+/// 15-second scan was re-walking the same project paths every time.
 final class AgentProjectNames: @unchecked Sendable {
-    private var names: [String: String] = [:]
-    private let lock = NSLock()
+    private static let sharedNames: NSMutableDictionary = [:]
+    /// Project folders grow markers (`.git`, `package.json`) after first sight; re-walk occasionally.
+    private static let ttl: TimeInterval = 600
 
     func name(for path: String) -> String {
-        lock.lock()
-        if let name = names[path] {
-            lock.unlock()
-            return name
-        }
-        lock.unlock()
+        if let hit = AgentProjectNames.sharedNames[path] as? (String, Date),
+           Date.now.timeIntervalSince(hit.1) < Self.ttl { return hit.0 }
         let name = AgentDiscovery.projectName(for: path)
-        lock.lock()
-        names[path] = name
-        lock.unlock()
+        AgentProjectNames.sharedNames[path] = (name, Date.now)
         return name
     }
 }

@@ -5,23 +5,44 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleDisplayName</key>
-    <string>Local Observer</string>
+    <string>Lookout</string>
     <key>CFBundleExecutable</key>
     <string>LocalObserver</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>dev.localobserver.app</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>Local Observer</string>
+    <string>Lookout</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
     <string>0.1.0</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>dev.localobserver.app</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>localobserver</string>
+            </array>
+        </dict>
+    </array>
+    <key>CFBundleSupportedPlatforms</key>
+    <array>
+        <string>MacOSX</string>
+    </array>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>3</string>
     <key>LSMinimumSystemVersion</key>
-    <string>14.0</string>
+    <string>14.2</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Lookout shows what's playing in Spotify or Music in the notch and lets you pause or skip.</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Lookout captures an app's audio only to change its volume or send it to a different output, like a per-app mixer. Nothing is recorded.</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSMainStoryboardFile</key>

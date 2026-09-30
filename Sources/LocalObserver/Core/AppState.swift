@@ -2,7 +2,9 @@ import Foundation
 import AppKit
 import SwiftUI
 
+/// Pages of the main window, grouped in the sidebar as Home, then one section per pillar: Agents, Servers, Shelf.
 enum SidebarItem: Hashable {
+    case home
     case all
     case favorites
     case launchers
@@ -10,21 +12,29 @@ enum SidebarItem: Hashable {
     case agentUsage
     case agentLimits
     case group(TypeGroup)
+    case shelf
+    case clipboard
 
     var title: String {
         switch self {
+        case .home: return "Home"
+        case .shelf: return "Shelf"
+        case .clipboard: return "Clipboard"
         case .all: return "All servers"
         case .favorites: return "Favorites"
         case .launchers: return "Launchers"
-        case .agentActivity: return "Activity"
+        case .agentActivity: return "Sessions"
         case .agentUsage: return "Usage"
-        case .agentLimits: return "Limits"
+        case .agentLimits: return "Plan limits"
         case .group(let g): return g.rawValue
         }
     }
 
     var symbol: String {
         switch self {
+        case .home: return "house"
+        case .shelf: return "tray.full"
+        case .clipboard: return "doc.on.clipboard"
         case .all: return "server.rack"
         case .favorites: return "star"
         case .launchers: return "play.square.stack"
@@ -41,6 +51,16 @@ enum SidebarItem: Hashable {
         default: return false
         }
     }
+
+    /// Pages listing servers, which share the server search, filters, and inspector.
+    var isServerPage: Bool {
+        switch self {
+        case .all, .favorites, .group: return true
+        default: return false
+        }
+    }
+
+    var isShelfPage: Bool { self == .shelf || self == .clipboard }
 }
 
 enum ViewMode: String, CaseIterable, Identifiable {
@@ -88,7 +108,7 @@ final class AppState: ObservableObject {
     @Published private(set) var lastScan: Date? = nil
     @Published private(set) var stopping: Set<String> = []
     @Published var searchText = ""
-    @Published var sidebar: SidebarItem = .all
+    @Published var sidebar: SidebarItem = .home
     @Published var selection: String? = nil
     @Published var toast: Toast? = nil
     @Published var draft: LauncherDraft? = nil
@@ -103,6 +123,7 @@ final class AppState: ObservableObject {
 
     private let defaults = UserDefaults.standard
     private var timer: Timer?
+    private var timerFast = true
     private var scanTask: Task<Void, Never>?
     private var toastTask: Task<Void, Never>?
     /// Consecutive failed probes per server — a single slow response shouldn't flip a row to "TCP".
@@ -127,29 +148,53 @@ final class AppState: ObservableObject {
         }
         scheduleTimer()
         refresh()
+        // React to the window opening or closing without waiting for the next slow tick.
+        NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification,
+                                               object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.autoRefresh, self.timerFast != Self.uiVisible else { return }
+                self.scheduleTimer()
+            }
+        }
     }
 
     // MARK: - scanning
 
     private func scheduleTimer() {
         timer?.invalidate()
+        timer = nil
         guard autoRefresh else { return }
-        timer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh(quiet: true) }
+        timerFast = Self.uiVisible
+        let interval: TimeInterval = timerFast ? 4.0 : 12.0
+        let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                // Re-installed each tick so the cadence follows window visibility:
+                // brisk while you're looking, cheap while it idles in the menu bar.
+                self?.refresh(quiet: true)
+                self?.scheduleTimer()
+            }
         }
-        timer?.tolerance = 0.5
+        timer.tolerance = interval / 2
+        self.timer = timer
+    }
+
+    private static var uiVisible: Bool {
+        NSApp.windows.contains { $0.isVisible && $0.canBecomeMain && !$0.isMiniaturized }
     }
 
     /// Coalesces: if a scan is already running, this call is a no-op.
     func refresh(quiet: Bool = false) {
         guard scanTask == nil else { return }
-        if !quiet { isScanning = true }
+        if !quiet {
+            PortScanner.resetProbeCache()
+            if !isScanning { isScanning = true }
+        }
         scanTask = Task { [weak self] in
             let result = await PortScanner.scan()
             guard let self else { return }
             self.apply(result)
             self.scanTask = nil
-            self.isScanning = false
+            if self.isScanning { self.isScanning = false }
         }
     }
 
@@ -202,7 +247,7 @@ final class AppState: ObservableObject {
     var filtered: [ServerEntry] {
         var list = visibleServers
         switch sidebar {
-        case .all, .launchers, .agentActivity, .agentUsage, .agentLimits: break
+        case .all, .launchers, .agentActivity, .agentUsage, .agentLimits, .home, .shelf, .clipboard: break
         case .favorites: list = list.filter { favorites.contains($0.port) }
         case .group(let g): list = list.filter { $0.projectType.group == g }
         }
@@ -252,7 +297,7 @@ final class AppState: ObservableObject {
         case .all: return visibleServers.count
         case .favorites: return visibleServers.filter { favorites.contains($0.port) }.count
         case .launchers: return managed.count
-        case .agentActivity, .agentUsage, .agentLimits: return 0
+        case .agentActivity, .agentUsage, .agentLimits, .home, .shelf, .clipboard: return 0
         case .group(let g): return visibleServers.filter { $0.projectType.group == g }.count
         }
     }

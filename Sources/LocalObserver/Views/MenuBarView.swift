@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import LocalObserverCore
+import LocalObserverShelf
 
 /// Menu bar popover: glance at what's running, open or stop it, start a saved launcher.
 struct MenuBarView: View {
@@ -8,6 +9,9 @@ struct MenuBarView: View {
     @ObservedObject var agentStore: AgentStore
     @Environment(\.openWindow) private var openWindow
     @State private var contentHeight: CGFloat = 0
+    @ObservedObject private var prefs = Preferences.shared
+    @ObservedObject var shelf: ShelfStore = .shared
+    @State private var shelfDropTargeted = false
 
     private var servers: [ServerEntry] {
         state.visibleServers.sorted {
@@ -24,7 +28,9 @@ struct MenuBarView: View {
         return Array(sessions.sorted { ($0.needsAttention ? 0 : 1, $1.updatedAt) < ($1.needsAttention ? 0 : 1, $0.updatedAt) }.prefix(6))
     }
     private var limitWindows: [AgentQuotaWindow] {
+        // Limited to the providers chosen in Settings › Menu Bar & Notch, when any are.
         Array(agentStore.limitReports.flatMap(\.windows)
+            .filter { prefs.limitProviders.isEmpty || prefs.limitProviders.contains($0.agent) }
             .filter { $0.kind == .session || $0.kind == .weekly || $0.kind == .monthly }
             .sorted { $0.usedPercent > $1.usedPercent }
             .prefix(4))
@@ -39,71 +45,9 @@ struct MenuBarView: View {
             // height, so a full agents+limits+servers popover never gets clipped off the bottom of the display.
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    if !agents.isEmpty {
-                        SectionLabel("Agents")
-                        VStack(spacing: 1) {
-                            ForEach(agents) { agent in
-                                MenuAgentRow(agent: agent) {
-                                    if !AgentActions.jump(to: agent) {
-                                        showWindow()
-                                        state.sidebar = .agentActivity
-                                        agentStore.selectedSessionID = agent.id
-                                    }
-                                }
-                            }
-                        }
-                        .padding(.horizontal, 6)
-                        .padding(.bottom, 6)
-                        Divider().padding(.horizontal, 10)
-                    }
-
-                    if !limitWindows.isEmpty {
-                        SectionLabel("Limits")
-                        VStack(spacing: 7) {
-                            ForEach(limitWindows) { MenuLimitRow(window: $0) }
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.top, 2)
-                        .padding(.bottom, 10)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            showWindow()
-                            state.sidebar = .agentLimits
-                        }
-                        Divider().padding(.horizontal, 10)
-                    }
-
-                    if servers.isEmpty {
-                        VStack(spacing: 6) {
-                            Image(systemName: "moon.zzz").font(.system(size: 18, weight: .light)).foregroundStyle(.tertiary)
-                            Text("Nothing running").font(.system(size: 12.5)).foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 22)
-                    } else {
-                        VStack(alignment: .leading, spacing: 1) {
-                            if !projects.isEmpty {
-                                if !apps.isEmpty { SectionLabel("Projects").padding(.leading, -8) }
-                                ForEach(projects) { MenuServerRow(state: state, server: $0) }
-                            }
-                            if !apps.isEmpty {
-                                if !projects.isEmpty { SectionLabel("Apps").padding(.leading, -8) }
-                                ForEach(apps) { MenuServerRow(state: state, server: $0) }
-                            }
-                        }
-                        .padding(6)
-                    }
-
-                    if !idleLaunchers.isEmpty {
-                        Divider().padding(.horizontal, 10)
-                        SectionLabel("Launchers")
-                        VStack(spacing: 1) {
-                            ForEach(idleLaunchers.prefix(6)) { l in
-                                MenuLauncherRow(state: state, launcher: l)
-                            }
-                        }
-                        .padding(.horizontal, 6)
-                        .padding(.bottom, 6)
+                    ForEach(Array(shownSections.enumerated()), id: \.element) { index, section in
+                        if index > 0 { Divider().padding(.horizontal, 10) }
+                        sectionView(section)
                     }
                 }
                 .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { contentHeight = $0 }
@@ -115,10 +59,14 @@ struct MenuBarView: View {
 
             Divider().padding(.horizontal, 10)
             VStack(spacing: 1) {
-                MenuItem(title: "Open Local Observer", symbol: "macwindow", shortcut: "o") { showWindow() }
+                MenuItem(title: "Open Lookout", symbol: "macwindow", shortcut: "o") { showWindow() }
                 MenuItem(title: "Agent activity", symbol: "waveform.path.ecg", shortcut: nil) {
                     showWindow()
                     state.sidebar = .agentActivity
+                }
+                MenuItem(title: prefs.peekVisible ? "Hide Agent Peek" : "Show Agent Peek", symbol: "eye", shortcut: nil,
+                         hint: prefs.peekHotKey?.display) {
+                    LiveSurfaces.shared.togglePeek()
                 }
                 MenuItem(title: "New server…", symbol: "plus", shortcut: nil) {
                     showWindow()
@@ -129,6 +77,177 @@ struct MenuBarView: View {
             .padding(6)
         }
         .frame(width: 360)
+        // Dropping anything on the panel puts it on the Shelf.
+        .onDrop(of: ShelfDrop.types, isTargeted: $shelfDropTargeted) { providers in
+            if prefs.isCollapsed(menu: "shelf") { prefs.toggleCollapsed(menu: "shelf") }
+            return shelf.add(providers: providers)
+        }
+        .overlay {
+            if shelfDropTargeted {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(N.blue, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
+                    .background(N.blue.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(alignment: .bottom) {
+                        Label("Drop to keep on the Shelf", systemImage: "tray.and.arrow.down.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 12)
+                            .frame(height: 28)
+                            .background(N.blue, in: Capsule())
+                            .padding(.bottom, 14)
+                    }
+                    .padding(4)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+
+
+    /// Sections in the user's order, skipping hidden ones and ones with nothing to show.
+    private var shownSections: [MenuSection] {
+        prefs.menuSections.filter { section in
+            guard prefs.isVisible(section) else { return false }
+            switch section {
+            case .today: return agentStore.todayTotals.processed > 0
+            case .usage: return agentStore.hasUsageHistory
+            case .sound: return true
+            case .agents: return !agents.isEmpty
+            case .limits: return !limitWindows.isEmpty
+            case .servers: return true
+            case .launchers: return !idleLaunchers.isEmpty
+            // Always shown, like Servers: its empty state says what the section is for.
+            case .shelf: return true
+            }
+        }
+    }
+
+    @ViewBuilder private func sectionView(_ section: MenuSection) -> some View {
+        switch section {
+        case .today:
+            SectionLabel("Today", key: "today", summary: AgentFormat.compact(Double(agentStore.todayTotals.processed)) + " tokens")
+            if !prefs.isCollapsed(menu: "today") {
+                MenuTodayCard(totals: agentStore.todayTotals) {
+                    showWindow()
+                    agentStore.filter.setPreset(.today)
+                    state.sidebar = .agentUsage
+                }
+            }
+        case .usage:
+            SectionLabel("Usage", key: "usage", summary: usageSummary)
+            if !prefs.isCollapsed(menu: "usage") {
+                GlanceUsageChart(store: agentStore) {
+                    showWindow()
+                    agentStore.filter = agentStore.glanceFilter
+                    state.sidebar = .agentUsage
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 2)
+                .padding(.bottom, 12)
+            }
+        case .sound:
+            SectionLabel("Sound", key: "sound", summary: soundSummary)
+            if !prefs.isCollapsed(menu: "sound") {
+                SoundMixerView(maxRows: 5)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 2)
+                    .padding(.bottom, 10)
+            }
+        case .agents:
+            SectionLabel("Agents", key: "agents", summary: agentsSummary)
+            if !prefs.isCollapsed(menu: "agents") {
+                VStack(spacing: 1) {
+                    ForEach(agents) { agent in
+                        MenuAgentRow(agent: agent) {
+                            if !AgentActions.jump(to: agent) {
+                                showWindow()
+                                state.sidebar = .agentActivity
+                                agentStore.selectedSessionID = agent.id
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 6)
+                .padding(.bottom, 6)
+            }
+        case .limits:
+            SectionLabel("Limits", key: "limits", summary: limitWindows.first.map { "\(Int($0.usedPercent.rounded()))% \($0.agent.shortName)" })
+            if !prefs.isCollapsed(menu: "limits") {
+                VStack(spacing: 7) {
+                    ForEach(limitWindows) { MenuLimitRow(window: $0) }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 2)
+                .padding(.bottom, 10)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    showWindow()
+                    state.sidebar = .agentLimits
+                }
+            }
+        case .servers:
+            if servers.isEmpty {
+                VStack(spacing: 6) {
+                    Image(systemName: "moon.zzz").font(.system(size: 18, weight: .light)).foregroundStyle(.tertiary)
+                    Text("Nothing running").font(.system(size: 12.5)).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 22)
+            } else {
+                serverGroup("Projects", key: "projects", projects)
+                serverGroup("Apps", key: "apps", apps)
+            }
+        case .launchers:
+            SectionLabel("Launchers", key: "launchers", summary: "\(idleLaunchers.count)")
+            if !prefs.isCollapsed(menu: "launchers") {
+                VStack(spacing: 1) {
+                    ForEach(idleLaunchers.prefix(6)) { l in
+                        MenuLauncherRow(state: state, launcher: l)
+                    }
+                }
+                .padding(.horizontal, 6)
+                .padding(.bottom, 6)
+            }
+        case .shelf:
+            shelfSection
+        }
+    }
+
+    @ViewBuilder private var shelfSection: some View {
+        SectionLabel("Shelf", key: "shelf", summary: shelf.shelf.isEmpty ? "empty" : "\(shelf.shelf.count)")
+        if !prefs.isCollapsed(menu: "shelf") {
+            ShelfMenuContent(store: shelf) { LiveSurfaces.shared.toggleMenuBarPanel() }
+                .padding(.horizontal, 6)
+                .padding(.bottom, 6)
+        }
+    }
+
+    @ViewBuilder private func serverGroup(_ title: String, key: String, _ entries: [ServerEntry]) -> some View {
+        if !entries.isEmpty {
+            SectionLabel(title, key: key, summary: "\(entries.count)")
+            if !prefs.isCollapsed(menu: key) {
+                VStack(spacing: 1) {
+                    ForEach(entries) { MenuServerRow(state: state, server: $0) }
+                }
+                .padding(.horizontal, 6)
+                .padding(.bottom, 6)
+            }
+        }
+    }
+
+    private var soundSummary: String {
+        let playing = AppAudio.shared.apps.filter(\.isPlaying).count
+        return playing == 0 ? "quiet" : "\(playing) playing"
+    }
+
+    private var usageSummary: String {
+        let report = agentStore.glanceUsage
+        return "\(AgentFormat.metric(report.totals.value(for: agentStore.glanceMetric), agentStore.glanceMetric)) · \(agentStore.glanceRange.longTitle.lowercased())"
+    }
+
+    /// Shown beside a folded Agents header so waiting sessions aren't missed.
+    private var agentsSummary: String {
+        let waiting = agents.filter(\.needsAttention).count
+        return waiting > 0 ? "\(agents.count), \(waiting) need\(waiting == 1 ? "s" : "") you" : "\(agents.count)"
     }
 
     /// Leaves room for the header, divider, and footer so the popover fits under the menu bar on any display.
@@ -179,12 +298,43 @@ struct MenuBarView: View {
     }
 }
 
+/// Section title that folds its rows away when clicked. While folded it shows a one-line summary.
 private struct SectionLabel: View {
     var text: String
-    init(_ text: String) { self.text = text }
+    var key: String
+    var summary: String?
+    @ObservedObject private var prefs = Preferences.shared
+    @State private var hover = false
+
+    init(_ text: String, key: String, summary: String? = nil) {
+        self.text = text
+        self.key = key
+        self.summary = summary
+    }
+
     var body: some View {
-        Text(text).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
-            .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 2)
+        let collapsed = prefs.isCollapsed(menu: key)
+        Button { withAnimation(.snappy(duration: 0.2)) { prefs.toggleCollapsed(menu: key) } } label: {
+            HStack(spacing: 5) {
+                Text(text).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                if collapsed, let summary {
+                    Text(summary).font(.system(size: 11)).foregroundStyle(.tertiary).monospacedDigit().lineLimit(1)
+                }
+                Spacer(minLength: 6)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .rotationEffect(.degrees(collapsed ? 0 : 90))
+                    .opacity(hover || collapsed ? 1 : 0)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, collapsed ? 8 : 2)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .help(collapsed ? "Expand \(text)" : "Collapse \(text)")
     }
 }
 
@@ -253,6 +403,7 @@ private struct MenuAgentRow: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 6)
+                HostAppIcon(session: agent, size: 16)
                 AgentStateTag(state: agent.state)
             }
             .padding(.horizontal, 8)
@@ -262,7 +413,7 @@ private struct MenuAgentRow: View {
         }
         .buttonStyle(.plain)
         .onHover { hover = $0 }
-        .help(agent.process?.host.map { "Jump to \($0.name)" } ?? "Show in Local Observer")
+        .help(agent.process?.host.map { "Jump to \($0.name)" } ?? "Show in Lookout")
     }
 }
 
@@ -283,7 +434,7 @@ private struct MenuLimitRow: View {
                 Text("\(Int(window.usedPercent.rounded()))%")
                     .font(.system(size: 11.5, weight: .semibold))
                     .monospacedDigit()
-                    .frame(width: 34, alignment: .trailing)
+                    .frame(width: 40, alignment: .trailing)
             }
             LimitMeter(window: window, height: 4)
         }
@@ -318,6 +469,7 @@ private struct MenuItem: View {
     var title: String
     var symbol: String
     var shortcut: Character?
+    var hint: String? = nil
     var action: () -> Void
     @State private var hover = false
 
@@ -328,6 +480,7 @@ private struct MenuItem: View {
                 Text(title).font(.system(size: 13))
                 Spacer()
                 if let shortcut { Text("⌘" + String(shortcut).uppercased()).font(.system(size: 12)).foregroundStyle(.tertiary) }
+                else if let hint { Text(hint).font(.system(size: 12)).foregroundStyle(.tertiary) }
             }
             .padding(.horizontal, 8)
             .frame(height: 28)
@@ -360,5 +513,35 @@ private struct CommandShortcut: ViewModifier {
     var key: Character?
     func body(content: Content) -> some View {
         if let key { content.keyboardShortcut(KeyEquivalent(key), modifiers: .command) } else { content }
+    }
+}
+
+/// Today at a glance: tokens, cost, requests, and cache hit rate since midnight.
+private struct MenuTodayCard: View {
+    var totals: AgentUsageTotals
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 0) {
+                stat("Tokens", AgentFormat.compact(Double(totals.processed)))
+                stat(totals.costIsEstimated ? "Est. cost" : "Cost", totals.hasCost ? AgentFormat.cost(totals.cost) : "–")
+                stat("Requests", totals.requests.formatted())
+                stat("Cache hits", totals.cacheHitRate.map { AgentFormat.percent($0, digits: 0) } ?? "–")
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Open today's usage")
+    }
+
+    private func stat(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(label).font(.system(size: 10.5)).foregroundStyle(.secondary)
+            Text(value).font(.system(size: 14, weight: .semibold)).monospacedDigit().lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

@@ -94,6 +94,12 @@ public enum AgentDiscovery {
 
     public static func isDesktopApp(_ processName: String) -> Bool { appAgent(processName: processName) != nil }
 
+    /// Every GUI app currently hosting a process, as host detection sees them. Used by verification.
+    public static func currentHostApps(now: Date = .now) -> [AgentHostApp] {
+        let table = processTable(now: now)
+        return table.keys.compactMap { hostApp(for: $0, in: table) }
+    }
+
     /// Full-path process table. `comm` keeps the whole executable path (spaces included), which host detection needs.
     static func processTable(now: Date) -> [Int32: ProcessRecord] {
         let commText = runTool("/bin/ps", ["-axo", "pid=,ppid=,etime=,tty=,comm="])
@@ -102,13 +108,14 @@ public enum AgentDiscovery {
         for line in argsText.split(separator: "\n") {
             let parts = line.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
             guard parts.count == 2, let pid = Int32(parts[0]) else { continue }
-            arguments[pid] = String(parts[1])
+            arguments[pid] = parts[1].trimmingCharacters(in: .whitespaces)
         }
         var table: [Int32: ProcessRecord] = [:]
         for line in commText.split(separator: "\n") {
             let parts = line.split(separator: " ", maxSplits: 4, omittingEmptySubsequences: true)
             guard parts.count == 5, let pid = Int32(parts[0]), let parentPID = Int32(parts[1]) else { continue }
-            let comm = String(parts[4])
+            // ps pads columns; the final split keeps that padding, which broke host paths ("   /Applications/…").
+            let comm = parts[4].trimmingCharacters(in: .whitespaces)
             table[pid] = ProcessRecord(
                 process: AgentProcess(
                     pid: pid,
@@ -360,7 +367,29 @@ public enum AgentDiscovery {
         return result
     }
 
+    private final class InstalledPaths: @unchecked Sendable {
+        var paths: [AgentKind: (path: String, checkedAt: Date)] = [:]
+        let lock = NSLock()
+    }
+    private static let installedPaths = InstalledPaths()
+
+    /// Where the agent is installed. Looking it up spawns `which` per executable name, so the answer is kept for
+    /// five minutes instead of being asked again on every refresh.
     private static func installedPath(for agent: AgentKind) -> String {
+        installedPaths.lock.lock()
+        if let cached = installedPaths.paths[agent], Date().timeIntervalSince(cached.checkedAt) < 300 {
+            installedPaths.lock.unlock()
+            return cached.path
+        }
+        installedPaths.lock.unlock()
+        let path = lookUpInstalledPath(for: agent)
+        installedPaths.lock.lock()
+        installedPaths.paths[agent] = (path, Date())
+        installedPaths.lock.unlock()
+        return path
+    }
+
+    private static func lookUpInstalledPath(for agent: AgentKind) -> String {
         for name in agent.executableNames {
             let path = runTool("/usr/bin/which", [name])
                 .split(separator: "\n")

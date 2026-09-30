@@ -69,6 +69,28 @@ struct LocalObserverVerification {
         let narrowed = AgentStore.buildReport(events: events, filter: codexOnly, enabledAgents: Set(AgentKind.allCases), now: now)
         precondition(narrowed.totals.processed == 220 && narrowed.availableModels == ["gpt"], "Agent filter failed")
 
+        // Custom ranges: inclusive days, zero-filled, and a range that ends before today excludes today's events.
+        let calendar = Calendar.current
+        var custom = filter
+        custom.setCustom(from: calendar.date(byAdding: .day, value: -4, to: now)!, to: calendar.date(byAdding: .day, value: -2, to: now)!)
+        let past = AgentStore.buildReport(events: events, filter: custom, enabledAgents: Set(AgentKind.allCases), now: now)
+        precondition(past.bucketDates.count == 3 && past.totals.events == 0, "Custom range should cover exactly its days")
+        custom.setCustom(from: now, to: now)
+        let single = AgentStore.buildReport(events: events, filter: custom, enabledAgents: Set(AgentKind.allCases), now: now)
+        precondition(single.isHourly && single.totals.processed == 330, "Single-day custom range should chart by hour")
+
+        // Rolling 24 hours: hourly, exactly 24 buckets ending in the current hour, includes events from now.
+        var rolling = filter
+        rolling.setRolling(hours: 24)
+        let last24 = AgentStore.buildReport(events: events, filter: rolling, enabledAgents: Set(AgentKind.allCases), now: now)
+        precondition(last24.isHourly && last24.bucketDates.count == 24 && last24.totals.processed == 330, "Rolling 24h window failed")
+        rolling.setPreset(.today)
+        precondition(!rolling.isRolling, "Choosing a preset should clear the rolling window")
+
+        // Host apps come from ps's full-path column; padding must not leak into the bundle path.
+        let hosts = AgentDiscovery.currentHostApps(now: now)
+        precondition(hosts.allSatisfy { $0.bundlePath.hasPrefix("/") }, "Host bundle paths should be absolute, without padding")
+
         // Process discovery: Windows-style .exe names, daemons, and nested launchers.
         precondition(AgentDiscovery.classify(processName: "/x/claude-code/bin/claude.exe", arguments: "claude.exe --output-format stream-json") == .claude, "claude.exe classification failed")
         precondition(AgentDiscovery.classify(processName: "/x/bin/codex", arguments: "codex app-server --listen unix:// --managed-daemon") == nil, "Codex daemon should not be a session")
@@ -84,11 +106,12 @@ struct LocalObserverVerification {
         precondition(abs((window.elapsedFraction(now: now) ?? 0) - 0.4) < 0.001, "Window elapsed fraction failed")
 
         LimitChecks.run()
+        ShelfChecks.run()
 
         for agent in AgentKind.allCases {
             precondition(AgentIconStore.image(for: agent) != nil, "Missing official icon for \(agent.name)")
         }
 
-        print("Local Observer core verification passed")
+        print("Lookout core verification passed")
     }
 }

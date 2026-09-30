@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- WidgetKit only loads sandboxed extensions. -->
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+    <!-- The app (not sandboxed) publishes snapshots here; the widgets only read them. The Shelf widget gets its
+         own folder with just what it shows, never the clipboard history next to it. -->
+    <key>com.apple.security.temporary-exception.files.home-relative-path.read-only</key>
+    <array>
+        <string>/Library/Application Support/LocalObserver/Widgets/</string>
+        <string>/Library/Application Support/LocalObserver/Shelf/Widget/</string>
+    </array>
+</dict>
+</plist>

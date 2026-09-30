@@ -132,62 +132,101 @@ struct PulsingDot: View {
 
 // MARK: - Limit meter
 
-/// How a window's usage compares with an even burn across the window.
-struct LimitPace {
-    enum Verdict { case unknown, comfortable, onPace, ahead, exhausted }
+/// How far a window is from an even burn, in words you can act on: how much you're over or under,
+/// what that means in time, and the rate that would last until the reset.
+struct PaceDeviation {
+    enum Kind { case ahead, under, onPace, exhausted, unknown }
 
-    var verdict: Verdict
-    var elapsed: Double?
-    /// When the window runs out at the current rate, if that happens before the reset.
-    var runsOutAt: Date?
+    var kind: Kind
+    /// Used minus elapsed, in percentage points. Positive means ahead of an even pace.
+    var points: Double
+    /// Ahead: how much sooner than an even pace you reached this usage.
+    var early: TimeInterval?
+    /// Share of the window you can still use per hour (or per day for long windows) and last until the reset.
+    var sustainableRate: (value: Double, perDay: Bool)?
+    var resetIn: TimeInterval?
+    private var usedPercent: Double
+    private var elapsedPercent: Double?
+
+    /// Within this many points of the even line counts as on pace.
+    static let tolerance = 3.0
 
     init(window: AgentQuotaWindow, now: Date = .now) {
-        elapsed = window.elapsedFraction(now: now)
-        runsOutAt = nil
-        let used = window.usedPercent / 100
-        if used >= 1 {
-            verdict = .exhausted
-            return
-        }
-        guard let elapsed, elapsed > 0.02, let reset = window.resetsAt else {
-            verdict = .unknown
-            return
-        }
-        let elapsedSeconds = elapsed * (window.windowDuration ?? 0)
-        if used > 0, elapsedSeconds > 0 {
-            let rate = used / elapsedSeconds
-            let outAt = now.addingTimeInterval((1 - used) / rate)
-            if outAt < reset { runsOutAt = outAt }
-        }
-        if runsOutAt != nil {
-            verdict = .ahead
-        } else if used > elapsed - 0.05 {
-            verdict = .onPace
+        usedPercent = window.usedPercent
+        resetIn = window.resetsAt.map { max(0, $0.timeIntervalSince(now)) }
+        let elapsed = window.elapsedFraction(now: now)
+        elapsedPercent = elapsed.map { $0 * 100 }
+        points = elapsed.map { window.usedPercent - $0 * 100 } ?? 0
+        if window.usedPercent >= 100 {
+            kind = .exhausted
+        } else if elapsed == nil {
+            kind = .unknown
+        } else if points > Self.tolerance {
+            kind = .ahead
+        } else if points < -Self.tolerance {
+            kind = .under
         } else {
-            verdict = .comfortable
+            kind = .onPace
+        }
+        if kind == .ahead, let duration = window.windowDuration { early = points / 100 * duration }
+        if let remaining = resetIn, remaining > 60, window.usedPercent < 100 {
+            let perDay = (window.windowDuration ?? 0) > 2 * 86_400
+            let units = remaining / (perDay ? 86_400 : 3_600)
+            sustainableRate = ((100 - window.usedPercent) / max(units, 0.01), perDay)
         }
     }
 
-    var sentence: String {
-        switch verdict {
-        case .unknown: return ""
-        case .exhausted: return "Limit reached"
-        case .comfortable: return "Under pace"
+    /// Short chip: "+12%", "−18%", "On pace", "Used up".
+    var chip: String {
+        switch kind {
+        case .ahead: return "+\(Int(points.rounded()))%"
+        case .under: return "−\(Int((-points).rounded()))%"
         case .onPace: return "On pace"
-        case .ahead:
-            guard let runsOutAt else { return "Ahead of pace" }
-            return "At this rate, runs out \(AgentFormat.relative(runsOutAt))"
+        case .exhausted: return "Used up"
+        case .unknown: return "\(Int(usedPercent.rounded()))%"
         }
     }
 
-    var tone: TagColor {
-        switch verdict {
-        case .exhausted: return .red
-        case .ahead: return .orange
-        default: return .gray
+    /// One short line under the chip: "36m early", "18% spare", "Back in 1h 2m".
+    var caption: String {
+        switch kind {
+        case .ahead: return early.map { "\(AgentFormat.duration($0)) early" } ?? "ahead of pace"
+        case .under: return "\(Int((-points).rounded()))% spare"
+        case .onPace: return resetIn.map { "resets in \(AgentFormat.duration($0))" } ?? "on track"
+        case .exhausted: return resetIn.map { "back in \(AgentFormat.duration($0))" } ?? "waiting for reset"
+        case .unknown: return resetIn.map { "resets in \(AgentFormat.duration($0))" } ?? ""
+        }
+    }
+
+    var rateText: String? {
+        sustainableRate.map { rate in
+            let value = rate.value >= 10 ? String(Int(rate.value.rounded())) : String(format: "%.1f", rate.value)
+            return "\(value)%/\(rate.perDay ? "day" : "h")"
+        }
+    }
+
+    /// The full explanation, for tooltips.
+    var advice: String {
+        let reset = resetIn.map { " until it resets in \(AgentFormat.duration($0))" } ?? " until the reset"
+        let context = elapsedPercent.map { "You've used \(Int(usedPercent.rounded()))% with \(Int($0.rounded()))% of the window gone." } ?? ""
+        switch kind {
+        case .ahead:
+            let time = early.map { ", about \(AgentFormat.duration($0)) early" } ?? ""
+            let rate = rateText.map { " Keep under \($0) to last\(reset)." } ?? ""
+            return "\(context) That's \(Int(points.rounded())) points over an even pace\(time).\(rate)"
+        case .under:
+            let rate = rateText.map { " You can use up to \($0) and still last\(reset)." } ?? ""
+            return "\(context) That's \(Int((-points).rounded())) points under an even pace.\(rate)"
+        case .onPace:
+            return "\(context) Right on an even pace\(rateText.map { ", about \($0)" } ?? "")."
+        case .exhausted:
+            return "Used up. It comes back\(resetIn.map { " in \(AgentFormat.duration($0))" } ?? " at the reset")."
+        case .unknown:
+            return "No window length reported, so pace can't be judged."
         }
     }
 }
+
 
 /// Horizontal usage bar with a pace tick at the share of the window that has elapsed.
 struct LimitMeter: View {
@@ -352,92 +391,34 @@ struct InlineNotice<Actions: View>: View {
     }
 }
 
-// MARK: - Formatting
 
-enum AgentFormat {
-    static let unavailable = "Unavailable"
-
-    static func tokens(_ value: Int64?) -> String {
-        guard let value else { return unavailable }
-        return compact(Double(value))
-    }
-
-    static func compact(_ value: Double) -> String {
-        let absolute = abs(value)
-        if absolute >= 1_000_000_000 { return trim(value / 1_000_000_000, "B") }
-        if absolute >= 1_000_000 { return trim(value / 1_000_000, "M") }
-        if absolute >= 1_000 { return trim(value / 1_000, "K") }
-        return value.formatted(.number.precision(.fractionLength(0)))
-    }
-
-    /// 1.62B, 26K, 4.72M: two decimals below 10, one below 100, none above.
-    private static func trim(_ value: Double, _ suffix: String) -> String {
-        let digits = abs(value) < 10 ? 2 : (abs(value) < 100 ? 1 : 0)
-        return value.formatted(.number.precision(.fractionLength(0...digits))) + suffix
-    }
-
-    static func cost(_ value: Double?, estimated: Bool = false) -> String {
-        guard let value else { return unavailable }
-        let text: String
-        if value == 0 { text = "$0.00" }
-        else if value < 0.01 { text = "<$0.01" }
-        else { text = value.formatted(.currency(code: "USD").precision(.fractionLength(2))) }
-        return estimated ? "≈\(text)" : text
-    }
-
-    static func metric(_ value: Double, _ metric: AgentMetricKind) -> String {
-        switch metric {
-        case .tokens: return compact(value)
-        case .cost: return cost(value)
-        case .requests: return compact(value)
+extension LimitPace {
+    var tone: TagColor {
+        switch verdict {
+        case .exhausted: return .red
+        case .ahead: return .orange
+        default: return .gray
         }
-    }
-
-    static func percent(_ fraction: Double, digits: Int = 1) -> String {
-        (fraction).formatted(.percent.precision(.fractionLength(0...digits)))
-    }
-
-    static func dateTime(_ date: Date) -> String {
-        date.formatted(date: .abbreviated, time: .shortened)
-    }
-
-    static func duration(_ seconds: TimeInterval) -> String {
-        let s = max(0, Int(seconds))
-        if s < 60 { return "\(s)s" }
-        if s < 3_600 { return "\(s / 60)m" }
-        if s < 86_400 { return s % 3_600 >= 60 ? "\(s / 3_600)h \((s % 3_600) / 60)m" : "\(s / 3_600)h" }
-        let days = s / 86_400
-        let hours = (s % 86_400) / 3_600
-        return hours > 0 ? "\(days)d \(hours)h" : "\(days)d"
-    }
-
-    /// "in 2h 14m", "tomorrow at 09:00", "Thu at 09:00".
-    static func relative(_ date: Date, now: Date = .now) -> String {
-        let seconds = date.timeIntervalSince(now)
-        if seconds <= 0 { return "now" }
-        if seconds < 12 * 3_600 { return "in \(duration(seconds))" }
-        let calendar = Calendar.current
-        let time = date.formatted(date: .omitted, time: .shortened)
-        if calendar.isDateInTomorrow(date) { return "tomorrow at \(time)" }
-        if seconds < 6 * 86_400 { return "\(date.formatted(.dateTime.weekday(.abbreviated))) at \(time)" }
-        return date.formatted(.dateTime.month(.abbreviated).day())
-    }
-
-    static func resetText(_ date: Date?, now: Date = .now) -> String {
-        guard let date else { return "Reset time unavailable" }
-        if date <= now { return "Resetting now" }
-        return "Resets \(relative(date, now: now))"
-    }
-
-    static func ago(_ date: Date?, now: Date = .now) -> String {
-        guard let date else { return "never" }
-        let s = now.timeIntervalSince(date)
-        if s < 10 { return "just now" }
-        return "\(duration(s)) ago"
     }
 }
 
 // MARK: - Actions
+
+/// Small icon of the terminal or editor a session runs in, so rows show where a click will take you.
+struct HostAppIcon: View {
+    var session: AgentSession
+    var size: CGFloat = 16
+
+    var body: some View {
+        if let icon = AgentActions.hostIcon(for: session) {
+            Image(nsImage: icon)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: size, height: size)
+                .help(session.process?.host.map { "Runs in \($0.name)" } ?? "")
+        }
+    }
+}
 
 enum AgentActions {
     static func reveal(_ path: String) {
@@ -463,12 +444,31 @@ enum AgentActions {
         let running = NSWorkspace.shared.runningApplications.first {
             $0.bundleURL?.standardizedFileURL == bundleURL.standardizedFileURL
         } ?? NSRunningApplication(processIdentifier: host.pid)
-        guard let app = running else { return false }
-        if !process.terminal.isEmpty, process.terminal != "??" {
+        if let app = running, !process.terminal.isEmpty, process.terminal != "??" {
             selectTab(tty: "/dev/\(process.terminal)", bundleID: app.bundleIdentifier)
         }
-        return app.activate(options: [.activateAllWindows])
+        // macOS 14+ ignores activate() from an app that isn't frontmost (the notch and menu bar never are),
+        // so hand activation over explicitly, then open the bundle, which always brings it forward.
+        if let app = running { NSApp.yieldActivation(to: app) }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        if FileManager.default.fileExists(atPath: bundleURL.path) {
+            NSWorkspace.shared.openApplication(at: bundleURL, configuration: configuration)
+            return true
+        }
+        return running?.activate() ?? false
     }
+
+    /// The Dock icon of the app hosting a session, cached by bundle path.
+    static func hostIcon(for session: AgentSession) -> NSImage? {
+        guard let path = session.process?.host?.bundlePath, !path.isEmpty else { return nil }
+        if let cached = hostIcons[path] { return cached }
+        let icon = NSWorkspace.shared.icon(forFile: path)
+        hostIcons[path] = icon
+        return icon
+    }
+
+    private nonisolated(unsafe) static var hostIcons: [String: NSImage] = [:]
 
     private static func selectTab(tty: String, bundleID: String?) {
         let script: String

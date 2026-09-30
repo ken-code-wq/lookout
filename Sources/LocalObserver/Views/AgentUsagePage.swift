@@ -59,7 +59,7 @@ struct AgentUsagePage: View {
         } else {
             agents = "\(store.filter.agents.count) agents"
         }
-        return "\(agents), \(store.filter.range.phrase)"
+        return "\(agents), \(store.filter.periodPhrase())"
     }
 
     // MARK: Filters
@@ -80,12 +80,7 @@ struct AgentUsagePage: View {
 
     private func chips(compact: Bool) -> some View {
         HStack(spacing: 6) {
-            FilterChip(title: store.filter.range.title, symbol: "calendar", active: false) {
-                Picker("Period", selection: $store.filter.range) {
-                    ForEach(AgentDateRange.allCases) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.inline)
-            }
+            PeriodChip(filter: $store.filter)
             FilterChip(title: agentChipTitle(compact), symbol: "sparkles", active: !store.filter.agents.isEmpty) {
                 Button("All agents") { store.filter.agents = [] }
                 Divider()
@@ -220,12 +215,6 @@ struct AgentUsagePage: View {
             HStack(alignment: .firstTextBaseline) {
                 Text(chartTitle).font(NFont.bodyMedium).foregroundStyle(N.text)
                 Spacer()
-                if let hoveredDate {
-                    Text(hoverSummary(hoveredDate))
-                        .font(NFont.small).monospacedDigit()
-                        .foregroundStyle(N.text2)
-                        .transition(.opacity)
-                }
             }
             if !report.metricHasData {
                 Text(metric == .cost
@@ -244,6 +233,10 @@ struct AgentUsagePage: View {
                         RuleMark(x: .value("Selected", hoveredDate, unit: unit))
                             .foregroundStyle(N.text3)
                             .lineStyle(StrokeStyle(lineWidth: 1))
+                            .annotation(position: .top, spacing: 6,
+                                        overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
+                                ChartTooltip(title: hoverTitle(hoveredDate), rows: hoverRows(hoveredDate), metric: metric)
+                            }
                     }
                 }
                 .chartForegroundStyleScale(domain: seriesAgents.map(\.name), range: seriesAgents.map(\.tag.fg))
@@ -300,22 +293,20 @@ struct AgentUsagePage: View {
         .lineStyle(StrokeStyle(lineWidth: 1.75, lineCap: .round, lineJoin: .round))
     }
 
-    private func hoverSummary(_ date: Date) -> String {
+    private func hoverRows(_ date: Date) -> [AgentUsageBucket] {
         let calendar = Calendar.current
-        let matches = report.buckets.filter {
+        return report.buckets.filter {
             report.isHourly
                 ? calendar.isDate($0.date, equalTo: date, toGranularity: .hour)
                 : calendar.isDate($0.date, inSameDayAs: date)
         }
-        let total = matches.reduce(0) { $0 + $1.value }
-        let label = report.isHourly
-            ? date.formatted(.dateTime.hour().minute())
-            : date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
-        let parts = matches.filter { $0.value > 0 }.sorted { $0.value > $1.value }
-            .prefix(3)
-            .map { "\($0.agent.shortName) \(AgentFormat.metric($0.value, metric))" }
-        let detail = parts.count > 1 ? "  (\(parts.joined(separator: ", ")))" : ""
-        return "\(label): \(AgentFormat.metric(total, metric))\(detail)"
+        .sorted { $0.value > $1.value }
+    }
+
+    private func hoverTitle(_ date: Date) -> String {
+        report.isHourly
+            ? date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+            : date.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
     }
 
     private var accessibilityChartSummary: String {
@@ -426,13 +417,13 @@ struct AgentUsagePage: View {
     @ViewBuilder private var emptyState: some View {
         if store.filter.isNarrowed || !store.searchText.isEmpty {
             EmptyStateView(symbol: "line.3.horizontal.decrease.circle", title: "Nothing matches these filters",
-                           message: "No usage \(store.filter.range.phrase) for the selected agents, projects, or models.") {
+                           message: "No usage \(store.filter.periodPhrase()) for the selected agents, projects, or models.") {
                 Button("Clear filters") { store.clearFilters() }.buttonStyle(SecondaryButtonStyle())
             }
-        } else if store.filter.range != .oneYear && store.hasUsageHistory {
-            EmptyStateView(symbol: "calendar", title: "No usage \(store.filter.range.phrase)",
+        } else if (store.filter.isCustom || store.filter.range != .oneYear) && store.hasUsageHistory {
+            EmptyStateView(symbol: "calendar", title: "No usage \(store.filter.periodPhrase())",
                            message: "Earlier activity is still recorded.") {
-                Button("Show 90 days") { store.filter.range = .ninetyDays }.buttonStyle(SecondaryButtonStyle())
+                Button("Show 90 days") { store.filter.setPreset(.ninetyDays) }.buttonStyle(SecondaryButtonStyle())
             }
         } else {
             EmptyStateView(symbol: "chart.xyaxis.line", title: "No usage recorded yet",
@@ -614,5 +605,171 @@ private struct UsageSkeleton: View {
             RoundedRectangle(cornerRadius: N.radius).fill(N.bgSoft).frame(height: 230)
         }
         .accessibilityLabel("Reading usage history")
+    }
+}
+
+
+// MARK: - Chart tooltip
+
+/// Floating card over the hovered day: every agent in the series and what it used, plus the total.
+struct ChartTooltip: View {
+    var title: String
+    var rows: [AgentUsageBucket]
+    var metric: AgentMetricKind
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(NFont.caption.weight(.semibold)).foregroundStyle(N.text)
+            ForEach(rows) { row in
+                HStack(spacing: 7) {
+                    Circle().fill(row.agent.tag.fg).frame(width: 7, height: 7)
+                    AgentIconView(agent: row.agent, size: 12)
+                    Text(row.agent.name).foregroundStyle(row.value > 0 ? N.text2 : N.text3)
+                    Spacer(minLength: 16)
+                    Text(row.value > 0 ? AgentFormat.metric(row.value, metric) : "–")
+                        .monospacedDigit()
+                        .foregroundStyle(row.value > 0 ? N.text : N.text3)
+                }
+                .font(NFont.caption)
+            }
+            if rows.count > 1 {
+                Rectangle().fill(N.divider).frame(height: 1)
+                HStack {
+                    Text("Total").foregroundStyle(N.text2)
+                    Spacer(minLength: 16)
+                    Text(AgentFormat.metric(rows.reduce(0) { $0 + $1.value }, metric))
+                        .monospacedDigit().foregroundStyle(N.text)
+                }
+                .font(NFont.caption.weight(.medium))
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(minWidth: 170)
+        .background(N.bgRaised, in: RoundedRectangle(cornerRadius: N.radius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: N.radius, style: .continuous).strokeBorder(N.divider))
+        .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+    }
+}
+
+// MARK: - Period picker
+
+/// Date chip with presets plus a custom from–to range, shown in a popover so it can hold date pickers.
+struct PeriodChip: View {
+    @Binding var filter: AgentUsageFilter
+    @State private var open = false
+    @State private var from = Calendar.current.date(byAdding: .day, value: -6, to: .now) ?? .now
+    @State private var to = Date.now
+
+    var body: some View {
+        Button { open.toggle() } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "calendar").font(.system(size: 10.5, weight: .medium))
+                Text(filter.periodTitle()).font(NFont.small).lineLimit(1)
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold)).opacity(0.7)
+            }
+            .foregroundStyle(filter.isCustom ? N.blue : N.text2)
+            .padding(.horizontal, 8)
+            .frame(height: 24)
+            .background(filter.isCustom ? N.selected : N.hover.opacity(0.0001),
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(filter.isCustom ? N.blue.opacity(0.35) : N.divider)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .popover(isPresented: $open, arrowEdge: .bottom) { popover }
+    }
+
+    private var popover: some View {
+        HStack(alignment: .top, spacing: 0) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Presets").font(NFont.caption.weight(.semibold)).foregroundStyle(N.text3).padding(.bottom, 4)
+                presetRow("Last 24 hours", selected: filter.isRolling) { filter.setRolling(hours: 24); open = false }
+                ForEach(AgentDateRange.allCases) { preset in
+                    presetRow(preset.title, selected: !filter.isCustom && !filter.isRolling && filter.range == preset) {
+                        filter.setPreset(preset); open = false
+                    }
+                }
+                Rectangle().fill(N.divider).frame(height: 1).padding(.vertical, 6)
+                presetRow("Yesterday", selected: false) { custom(dayOffset: -1, length: 1) }
+                presetRow("This week", selected: false) { calendarPeriod(.weekOfYear, offset: 0) }
+                presetRow("Last week", selected: false) { calendarPeriod(.weekOfYear, offset: -1) }
+                presetRow("This month", selected: false) { calendarPeriod(.month, offset: 0) }
+                presetRow("Last month", selected: false) { calendarPeriod(.month, offset: -1) }
+            }
+            .frame(width: 130, alignment: .leading)
+            .padding(12)
+
+            Rectangle().fill(N.divider).frame(width: 1)
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Custom range").font(NFont.caption.weight(.semibold)).foregroundStyle(N.text3)
+                DatePicker("From", selection: $from, in: ...Date.now, displayedComponents: .date)
+                DatePicker("To", selection: $to, in: ...Date.now, displayedComponents: .date)
+                Text("Both days are included. Single-day ranges chart by hour.")
+                    .font(NFont.caption).foregroundStyle(N.text3)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    if filter.isCustom {
+                        Button("Reset") { filter.setPreset(.thirtyDays); open = false }.buttonStyle(GhostButtonStyle())
+                    }
+                    Spacer()
+                    Button("Apply") { filter.setCustom(from: from, to: to); open = false }
+                        .buttonStyle(PrimaryButtonStyle())
+                        .keyboardShortcut(.defaultAction)
+                }
+            }
+            .font(NFont.small)
+            .padding(12)
+            .frame(width: 250)
+        }
+        .onAppear {
+            if let s = filter.customStart, let e = filter.customEnd { from = s; to = e }
+        }
+    }
+
+    private func presetRow(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(title).foregroundStyle(N.text)
+                Spacer()
+                if selected { Image(systemName: "checkmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(N.blue) }
+            }
+            .font(NFont.small)
+            .padding(.horizontal, 6)
+            .frame(height: 24)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(RowHoverButtonStyle())
+    }
+
+    private func custom(dayOffset: Int, length: Int) {
+        let cal = Calendar.current
+        let start = cal.date(byAdding: .day, value: dayOffset, to: cal.startOfDay(for: .now)) ?? .now
+        let end = cal.date(byAdding: .day, value: length - 1, to: start) ?? start
+        filter.setCustom(from: start, to: end)
+        open = false
+    }
+
+    private func calendarPeriod(_ unit: Calendar.Component, offset: Int) {
+        let cal = Calendar.current
+        guard let anchor = cal.date(byAdding: unit, value: offset, to: .now),
+              let interval = cal.dateInterval(of: unit, for: anchor) else { return }
+        let end = min(interval.end.addingTimeInterval(-1), .now)
+        filter.setCustom(from: interval.start, to: end)
+        open = false
+    }
+}
+
+private struct RowHoverButtonStyle: ButtonStyle {
+    @State private var hover = false
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(configuration.isPressed || hover ? N.hover : .clear, in: RoundedRectangle(cornerRadius: 4))
+            .onHover { hover = $0 }
     }
 }
