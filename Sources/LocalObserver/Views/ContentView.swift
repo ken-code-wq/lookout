@@ -1,6 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import LocalObserverCore
+import LocalObserverShelf
 
 struct ContentView: View {
     @ObservedObject var state: AppState
@@ -16,7 +17,9 @@ struct ContentView: View {
     }
 
     private var isAgentHub: Bool { state.sidebar.isAgentPage }
-    private var inspectingServer: ServerEntry? { state.sidebar == .launchers || isAgentHub ? nil : state.selected }
+    private var inspectingServer: ServerEntry? {
+        state.sidebar == .launchers || state.sidebar == .home || isAgentHub ? nil : state.selected
+    }
     private var inspectingAgent: AgentSession? { state.sidebar == .agentActivity ? agentStore.selectedSession : nil }
     private var isInspecting: Bool { inspectingServer != nil || inspectingAgent != nil }
 
@@ -63,7 +66,9 @@ struct ContentView: View {
 
     private var page: some View {
         Group {
-            if state.sidebar == .launchers {
+            if state.sidebar == .home {
+                HomePage(state: state, agentStore: agentStore, shelf: ShelfStore.shared)
+            } else if state.sidebar == .launchers {
                 LaunchersPage(state: state)
             } else if state.sidebar == .agentActivity {
                 AgentActivityPage(store: agentStore)
@@ -157,6 +162,7 @@ struct SidebarView: View {
     var body: some View {
         List(selection: sidebarBinding) {
             Section {
+                row(.home)
                 row(.all)
                 row(.favorites)
                 row(.launchers)

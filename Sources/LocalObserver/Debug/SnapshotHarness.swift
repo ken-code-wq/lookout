@@ -143,6 +143,14 @@ enum SnapshotHarness {
                     await render(view, size: size, dark: dark, to: url)
                 }
             }
+            if wanted("home") {
+                let shelf = await sampleShelf()
+                for dark in [false, true] {
+                    let view = AnyView(HomePage(state: AppState(), agentStore: store, shelf: shelf))
+                    await render(view, size: CGSize(width: width, height: 1400), dark: dark,
+                                 to: directory.appendingPathComponent("home-\(dark ? "dark" : "light").png"))
+                }
+            }
             // Shelf: a sample store in a temp folder (the user's real shelf is never read or written here), and an
             // empty one for the empty states. Agents and servers are whatever this Mac has; the Shelf doesn't care.
             if wanted("notch-shelf") || wanted("menubar-shelf") || wanted("settings-shelf") {

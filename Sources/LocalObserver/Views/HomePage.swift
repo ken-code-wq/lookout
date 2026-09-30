@@ -10,6 +10,7 @@ struct HomePage: View {
     @ObservedObject var shelf: ShelfStore
     @ObservedObject private var prefs = Preferences.shared
     @State private var width: CGFloat = 1000
+    @State private var heatmapMetric: AgentMetricKind = .tokens
 
     private var wide: Bool { width > 900 }
     private var horizontalPadding: CGFloat { width > 1100 ? 64 : (width > 800 ? 44 : 24) }
@@ -68,6 +69,24 @@ struct HomePage: View {
                     HomeCard(title: "Plan limits", symbol: "gauge.with.dots.needle.33percent", count: nil,
                              link: "Plan limits", action: { navigate(.agentLimits) }) {
                         limitsCard(windows)
+                    }
+                }
+                .padding(.bottom, 16)
+
+                HomeCard(title: "Year at a glance", symbol: "calendar", count: nil,
+                         link: "Usage", action: { navigate(.agentUsage) }) {
+                    if agentStore.hasUsageHistory {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Picker("Metric", selection: $heatmapMetric) {
+                                ForEach(AgentMetricKind.allCases) { Text($0.rawValue).tag($0) }
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .fixedSize()
+                            UsageHeatmapView(days: agentStore.heatmap, metric: heatmapMetric)
+                        }
+                    } else {
+                        HomeEmpty(symbol: "calendar", text: "The year grid fills in once your agents have run.")
                     }
                 }
                 .padding(.bottom, 16)

@@ -18,6 +18,9 @@ public final class AgentStore: ObservableObject {
     @Published public private(set) var todayTotals = AgentUsageTotals()
     /// Today's usage per model, most tokens first.
     @Published public private(set) var todayModels: [AgentUsageRow] = []
+    /// Daily totals for the last 365 days across the agents the Usage page filter keeps
+    /// (enabled ∩ selected). Ignores project, model, search, and period filters — feeds the heatmap grid.
+    @Published public private(set) var heatmap: [AgentHeatmapDay] = []
     @Published public var activityFilter = AgentActivityFilter()
     /// Compact chart shown in the menu bar panel and the notch, independent of the Usage page filters.
     @Published public var glanceRange: AgentGlanceRange { didSet { if glanceRange != oldValue { saveGlance(); rebuildGlance() } } }
@@ -264,7 +267,23 @@ public final class AgentStore: ObservableObject {
         let todayReport = Self.buildReport(events: ledgerEvents, filter: today, enabledAgents: settings.enabledAgents)
         todayTotals = todayReport.totals
         todayModels = todayReport.rows
+        rebuildHeatmap()
         rebuildGlance()
+    }
+
+    private func rebuildHeatmap() {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: .now)
+        guard let windowStart = calendar.date(byAdding: .day, value: -(AgentDateRange.oneYear.rawValue - 1), to: today) else { return }
+        let agents = filter.agents.isEmpty ? settings.enabledAgents : filter.agents.intersection(settings.enabledAgents)
+        var days: [Date: AgentHeatmapDay] = [:]
+        for event in ledgerEvents where event.observedAt >= windowStart && agents.contains(event.agent) {
+            let day = calendar.startOfDay(for: event.observedAt)
+            var entry = days[day] ?? AgentHeatmapDay(date: day)
+            entry.add(event)
+            days[day] = entry
+        }
+        heatmap = days.values.sorted { $0.date < $1.date }
     }
 
     public var glanceFilter: AgentUsageFilter {

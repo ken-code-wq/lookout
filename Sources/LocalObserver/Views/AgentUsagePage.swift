@@ -24,6 +24,7 @@ struct AgentUsagePage: View {
                     emptyState
                 } else {
                     overview.padding(.top, 28)
+                    heatmapSection.padding(.top, 36)
                     totals.padding(.top, 32)
                     breakdown.padding(.top, 36)
                 }
@@ -312,6 +313,25 @@ struct AgentUsagePage: View {
     private var accessibilityChartSummary: String {
         guard let busiest = report.busiest else { return "No activity" }
         return "Peak \(AgentFormat.metric(busiest.value, metric)) on \(busiest.date.formatted(date: .abbreviated, time: .omitted))"
+    }
+
+    // MARK: Daily activity
+
+    /// The year grid follows the tab's metric, but not the period, project, model, or search filters.
+    private var heatmapSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionTitle(title: "Daily activity") {
+                Text("Last 12 months").font(NFont.caption).foregroundStyle(N.text3)
+            }
+            UsageHeatmapView(days: store.heatmap, metric: metric)
+            if store.filter.isNarrowed || !store.searchText.isEmpty {
+                Text("The grid covers every project and model for the selected agents.")
+                    .font(NFont.caption)
+                    .foregroundStyle(N.text3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 10)
+            }
+        }
     }
 
     // MARK: Totals

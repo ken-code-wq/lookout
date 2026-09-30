@@ -901,6 +901,41 @@ public struct AgentUsageReport: Sendable {
     }
 }
 
+/// One day in the year-long usage heatmap. Only days with events appear.
+public struct AgentHeatmapDay: Identifiable, Hashable, Sendable {
+    public var date: Date
+    public var processed: Int64 = 0
+    public var cost: Double = 0
+    public var pricedEvents = 0
+    public var estimatedCostEvents = 0
+    public var requests = 0
+
+    public init(date: Date) { self.date = date }
+    public var id: Date { date }
+
+    public var hasCost: Bool { pricedEvents > 0 }
+    public var costIsEstimated: Bool { estimatedCostEvents > 0 }
+
+    /// nil when this day has no data for the metric (e.g. cost for unpriced models).
+    public func value(for metric: AgentMetricKind) -> Double? {
+        switch metric {
+        case .tokens: return Double(processed)
+        case .cost: return hasCost ? cost : nil
+        case .requests: return Double(requests)
+        }
+    }
+
+    mutating func add(_ event: AgentUsageEvent) {
+        processed += event.usage.normalized().processedTokens ?? 0
+        if let value = event.cost {
+            cost += value
+            pricedEvents += 1
+            if event.costIsEstimated { estimatedCostEvents += 1 }
+        }
+        requests += event.requests ?? 1
+    }
+}
+
 /// Coarse state buckets the Activity page groups running sessions into.
 public enum AgentActivityBucket: String, CaseIterable, Identifiable, Sendable {
     case needsYou = "Needs you"
