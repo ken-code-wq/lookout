@@ -58,6 +58,7 @@ extension AgentKind {
         case .copilot: return Color(light: 0x8A5CF0, dark: 0xA370F7)
         case .cursor: return Color(light: 0x2E9E9E, dark: 0x5EC7C7)
         case .pi: return Color(light: 0x3E9E4A, dark: 0x7DE587)
+        case .qoder: return Color(light: 0xC98A22, dark: 0xE0AC4F)
         }
     }
 

@@ -82,7 +82,8 @@ public enum AgentDiscovery {
         let apps: [(String, AgentKind)] = [
             ("/Antigravity.app/Contents/MacOS/", .antigravity),
             ("/Antigravity IDE.app/Contents/MacOS/", .antigravity),
-            ("/Cursor.app/Contents/MacOS/", .cursor)
+            ("/Cursor.app/Contents/MacOS/", .cursor),
+            ("/Qoder.app/Contents/MacOS/", .qoder)
         ]
         for (marker, agent) in apps {
             guard let range = processName.range(of: marker) else { continue }
@@ -400,7 +401,8 @@ public enum AgentDiscovery {
         let desktopPaths: [AgentKind: [String]] = [
             .antigravity: ["/Applications/Antigravity.app", "\(NSHomeDirectory())/Applications/Antigravity.app"],
             .cursor: ["/Applications/Cursor.app", "\(NSHomeDirectory())/Applications/Cursor.app"],
-            .copilot: ["/Applications/GitHub Copilot.app", "\(NSHomeDirectory())/Applications/GitHub Copilot.app"]
+            .copilot: ["/Applications/GitHub Copilot.app", "\(NSHomeDirectory())/Applications/GitHub Copilot.app"],
+            .qoder: ["/Applications/Qoder.app", "\(NSHomeDirectory())/Applications/Qoder.app"]
         ]
         if let path = desktopPaths[agent]?.first(where: { FileManager.default.fileExists(atPath: $0) }) {
             return path

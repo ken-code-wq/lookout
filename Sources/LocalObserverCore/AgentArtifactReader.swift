@@ -18,6 +18,7 @@ enum AgentArtifactReader {
             case .codex: return AgentCodexReader.read(historyDays: historyDays, now: now)
             case .copilot: return AgentCopilotReader.read(historyDays: historyDays, now: now)
             case .pi: return AgentPiReader.read(historyDays: historyDays, now: now)
+            case .qoder: return AgentQoderReader.read(historyDays: historyDays, now: now)
             case .antigravity: return AgentAntigravityReader.read(historyDays: historyDays, now: now)
             // Read by AgentProviderClients.readOpenCode, which owns the OpenCode source.
             case .openCode: return AgentArtifactResult()

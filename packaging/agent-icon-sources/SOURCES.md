@@ -17,6 +17,7 @@ These are third-party trademarks. They are used here only to identify each tool,
 | `copilot.svg` | copilot.png | GitHub Copilot mark (goggles face), black | https://github.com/primer/octicons/blob/main/icons/copilot-24.svg | Octicons is MIT. The Copilot mark is a GitHub trademark; see https://brand.github.com |
 | `cursor.svg` | cursor.png | Cursor cube (2D), black | `General Logos/Cube/SVG/CUBE_2D_LIGHT.svg` in https://ptht05hbb1ssoooe.public.blob.vercel-storage.com/assets/brand/cursor-brand-assets.zip (linked from https://cursor.com/brand). Fill changed from #26251e to #000000. | Anysphere trademark. Official brand kit. |
 | `pi.svg` | pi.png | Pi mark (blocky "pi" glyph), black | https://pi.dev/favicon.svg, the official one-color mark. The multicolor version is https://pi.dev/logo.svg; press kit: https://pi.dev/press-kit | Mario Zechner / pi.dev. Official press-kit asset. |
+| `qoder-app-icon.png` | qoder.png | Qoder "a" mark, black | `icon_256x256.png` extracted from `/Applications/Qoder.app/Contents/Resources/icon.icns` with `iconutil -c iconset`. No vector brand kit is published, so the shipped app icon is the source. | Qoder trademark. Extracted from the installed app for identification only. |
 
 ## Regenerating
 
@@ -24,6 +25,9 @@ These are third-party trademarks. They are used here only to identify each tool,
 npm i @resvg/resvg-js
 node render-svg.mjs claude.svg ../../Sources/LocalObserverCore/Resources/AgentIcons/claude.png   # same for codex/opencode/copilot/cursor/pi
 swift render-raster.swift antigravity-icon__full-color.png ../../Sources/LocalObserverCore/Resources/AgentIcons/antigravity.png
+# Qoder has no vector source: extract the installed app icon, then flatten it to a one-color mark.
+iconutil -c iconset /Applications/Qoder.app/Contents/Resources/icon.icns -o /tmp/qoder.iconset
+swift render-app-icon-mono.swift qoder-app-icon.png ../../Sources/LocalObserverCore/Resources/AgentIcons/qoder.png
 ```
 
 Use resvg, not AppKit `NSImage` or CoreSVG. CoreSVG mis-parses compact arc flags such as `a.117.117 0 00.107.029` and draws the Codex path wrong.

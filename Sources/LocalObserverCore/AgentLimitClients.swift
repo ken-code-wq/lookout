@@ -25,7 +25,7 @@ public enum AgentLimitClients {
     public static func supportsAccountLimits(_ agent: AgentKind) -> Bool {
         switch agent {
         case .claude, .codex, .copilot, .cursor, .antigravity: return true
-        case .openCode, .pi: return false
+        case .openCode, .pi, .qoder: return false
         }
     }
 
@@ -43,6 +43,8 @@ public enum AgentLimitClients {
             return "Runs the agy usage report, which reads your Antigravity quota without sending a prompt."
         case .openCode, .pi:
             return "Uses the limits of the provider you sign in with."
+        case .qoder:
+            return "Qoder bills with plan credits, which it does not expose locally."
         }
     }
 
@@ -56,7 +58,7 @@ public enum AgentLimitClients {
         case .codex: return 120
         case .copilot, .cursor: return 300
         case .antigravity: return 600
-        case .openCode, .pi: return .infinity
+        case .openCode, .pi, .qoder: return .infinity
         }
     }
 
@@ -74,7 +76,7 @@ public enum AgentLimitClients {
             case .copilot: return await fetchCopilot()
             case .cursor: return await fetchCursor()
             case .antigravity: return await fetchAntigravity()
-            case .openCode, .pi: return AgentLimitOutcome(AgentLimitReport(agent: agent, status: .unsupported))
+            case .openCode, .pi, .qoder: return AgentLimitOutcome(AgentLimitReport(agent: agent, status: .unsupported))
             }
         }
     }

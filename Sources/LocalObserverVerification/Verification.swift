@@ -96,6 +96,8 @@ struct LocalObserverVerification {
         precondition(AgentDiscovery.classify(processName: "/x/bin/codex", arguments: "codex app-server --listen unix:// --managed-daemon") == nil, "Codex daemon should not be a session")
         precondition(AgentDiscovery.classify(processName: "/Applications/Cursor.app/Contents/Frameworks/Cursor Helper.app/Contents/MacOS/Cursor Helper", arguments: "") == nil, "App helpers should not count")
         precondition(AgentDiscovery.classify(processName: "/Applications/Cursor.app/Contents/MacOS/Cursor", arguments: "") == .cursor, "Cursor app classification failed")
+        precondition(AgentDiscovery.classify(processName: "/Applications/Qoder.app/Contents/MacOS/Qoder", arguments: "") == .qoder, "Qoder app classification failed")
+        precondition(AgentDiscovery.classify(processName: "/Applications/Qoder.app/Contents/Frameworks/Qoder Helper.app/Contents/MacOS/Qoder Helper", arguments: "") == nil, "Qoder helpers should not count")
 
         // Pace marker: 60% used with 40% of a 5-hour window elapsed runs out before the reset.
         let window = AgentQuotaWindow(

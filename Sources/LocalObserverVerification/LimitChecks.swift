@@ -172,7 +172,7 @@ enum LimitChecks {
 
     private static func checkPolicy() {
         for agent in AgentKind.allCases {
-            let expected = ![.openCode, .pi].contains(agent)
+            let expected = ![.openCode, .pi, .qoder].contains(agent)
             precondition(AgentLimitClients.supportsAccountLimits(agent) == expected, "Account limit support wrong for \(agent)")
             let description = AgentLimitClients.connectDescription(agent)
             precondition(!description.isEmpty && !description.contains("—"), "Connect description missing or uses an em dash for \(agent)")

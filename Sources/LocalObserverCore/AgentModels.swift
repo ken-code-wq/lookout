@@ -8,6 +8,7 @@ public enum AgentKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case copilot
     case cursor
     case pi
+    case qoder
 
     public var id: String { rawValue }
 
@@ -20,6 +21,7 @@ public enum AgentKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .copilot: return "GitHub Copilot"
         case .cursor: return "Cursor"
         case .pi: return "Pi"
+        case .qoder: return "Qoder"
         }
     }
 
@@ -32,6 +34,7 @@ public enum AgentKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .copilot: return ["copilot"]
         case .cursor: return ["cursor-agent", "cursor"]
         case .pi: return ["pi"]
+        case .qoder: return ["qoder"]
         }
     }
 
@@ -44,6 +47,7 @@ public enum AgentKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .copilot: return [".copilot/session-state"]
         case .cursor: return [".cursor"]
         case .pi: return [".pi/agent/sessions"]
+        case .qoder: return [".qoder/projects"]
         }
     }
 
@@ -56,6 +60,7 @@ public enum AgentKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .copilot: return ["copilot", "gh-copilot"]
         case .cursor: return ["cursor-agent", "cursor"]
         case .pi: return ["pi"]
+        case .qoder: return ["qoder"]
         }
     }
 
@@ -68,6 +73,9 @@ public enum AgentKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .copilot: return AgentCapabilities(sessions: true, tokens: true, cost: true, quota: true)
         case .cursor: return AgentCapabilities(sessions: true, tokens: false, cost: true, quota: false)
         case .pi: return AgentCapabilities(sessions: true, tokens: true, cost: true, quota: false)
+        // Qoder zeroes its token fields and bills in subscription credits, which reset per cycle
+        // rather than mapping onto dollars, so only request counts survive locally.
+        case .qoder: return AgentCapabilities(sessions: true, tokens: false, cost: false, quota: false)
         }
     }
 
@@ -80,6 +88,7 @@ public enum AgentKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .copilot: return URL(string: "https://brand.github.com/brand-identity/copilot")
         case .cursor: return URL(string: "https://cursor.com/brand")
         case .pi: return URL(string: "https://pi.dev/press-kit")
+        case .qoder: return URL(string: "https://qoder.com")
         }
     }
 
@@ -92,6 +101,7 @@ public enum AgentKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .copilot: return "copilot"
         case .cursor: return "cursor"
         case .pi: return "pi"
+        case .qoder: return "qoder"
         }
     }
 }

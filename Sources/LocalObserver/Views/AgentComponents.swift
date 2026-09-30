@@ -15,6 +15,7 @@ extension AgentKind {
         case .copilot: return .purple
         case .cursor: return .brown
         case .pi: return .pink
+        case .qoder: return .yellow
         }
     }
 
