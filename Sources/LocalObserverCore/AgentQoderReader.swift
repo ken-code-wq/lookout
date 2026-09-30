@@ -62,7 +62,7 @@ struct QoderFileState: AgentLineScanState {
     }
 
     private mutating func consumeUser(_ object: [String: Any], isToolResult: Bool) {
-        noteCommon(object)
+        _ = noteCommon(object)
         tail = isToolResult ? .toolResult : .userPrompt
         guard !isToolResult, firstPrompt.isEmpty, AgentJSON.bool(object, ["isMeta"]) != true,
               let message = AgentJSON.object(object, ["message"]) else { return }
