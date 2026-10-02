@@ -79,10 +79,10 @@ final class AppAudio: ObservableObject {
         addListener(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDevices)
         addListener(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyProcessObjectList)
         addListener(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultOutputDevice)
-        let timer = Timer(timeInterval: 5, repeats: true) { _ in
+        let timer = Timer(timeInterval: 30, repeats: true) { _ in
             MainActor.assumeIsolated { AppAudio.shared.refresh() }
         }
-        timer.tolerance = 1
+        timer.tolerance = 10
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
     }
@@ -91,7 +91,21 @@ final class AppAudio: ObservableObject {
         var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
                                                  mElement: kAudioObjectPropertyElementMain)
         AudioObjectAddPropertyListenerBlock(object, &address, .main) { [weak self] _, _ in
-            MainActor.assumeIsolated { self?.refresh() }
+            MainActor.assumeIsolated { self?.refreshSoon() }
+        }
+    }
+
+    private var refreshPending = false
+
+    /// Coalesces bursts of CoreAudio notifications (one app start fires several) into a single refresh.
+    private func refreshSoon() {
+        guard !refreshPending else { return }
+        refreshPending = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            MainActor.assumeIsolated {
+                self?.refreshPending = false
+                self?.refresh()
+            }
         }
     }
 

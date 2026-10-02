@@ -156,8 +156,25 @@ enum AgentLimitProcess {
         var timedOut: Bool
     }
 
-    /// Finds an executable by name in PATH plus the usual install locations GUI apps miss.
+    private static var resolvedExecutables: [String: String] = [:]
+    private static let resolvedLock = NSLock()
+
+    /// Finds an executable by name in PATH plus the usual install locations GUI apps miss; hits are remembered (and re-checked) so refreshes don't re-walk PATH.
     static func executable(named name: String) -> String? {
+        resolvedLock.lock()
+        let known = resolvedExecutables[name]
+        resolvedLock.unlock()
+        if let known, FileManager.default.isExecutableFile(atPath: known) { return known }
+        let found = findExecutable(named: name)
+        if let found {
+            resolvedLock.lock()
+            resolvedExecutables[name] = found
+            resolvedLock.unlock()
+        }
+        return found
+    }
+
+    private static func findExecutable(named name: String) -> String? {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         var directories = (ProcessInfo.processInfo.environment["PATH"] ?? "")
             .split(separator: ":").map(String.init)

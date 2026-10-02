@@ -298,7 +298,7 @@ struct EqualizerBars: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 12, paused: !playing || reduceMotion)) { context in
+        TimelineView(.animation(minimumInterval: 1.0 / 5, paused: !playing || reduceMotion)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             HStack(alignment: .center, spacing: 2) {
                 ForEach(0..<4, id: \.self) { i in

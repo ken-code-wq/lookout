@@ -358,8 +358,22 @@ struct ToastView: View {
 struct RelativeTimeText: View {
     var date: Date?
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
+        TimelineView(RelativeTimeSchedule(date: date)) { context in
             Text(label(now: context.date)).monospacedDigit()
+        }
+    }
+    /// Every second for the first minute, then every 20s: second-level precision stops mattering.
+    private struct RelativeTimeSchedule: TimelineSchedule {
+        var date: Date?
+        func entries(from start: Date, mode: Mode) -> AnyIterator<Date> {
+            var next = start
+            return AnyIterator {
+                defer {
+                    let age = self.date.map { next.timeIntervalSince($0) } ?? 0
+                    next = next.addingTimeInterval(age < 60 ? 1 : 20)
+                }
+                return next
+            }
         }
     }
     private func label(now: Date) -> String {

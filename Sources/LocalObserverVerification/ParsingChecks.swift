@@ -8,6 +8,7 @@ enum ParsingChecks {
         checkPricing()
         checkClaude()
         checkCodex()
+        checkQoder()
         print("Lookout parsing checks passed")
     }
 
@@ -164,6 +165,34 @@ enum ParsingChecks {
         precondition(session5h.resetsAt == base.addingTimeInterval(3_601), "resets_in_seconds must be relative to the event")
         precondition(weekly.usedPercent == 10 && weekly.resetsAt == Date(timeIntervalSince1970: TimeInterval(weeklyReset)), "Codex secondary window")
         precondition(session5h.source == "Codex session log", "Codex window source")
+    }
+
+    /// Qoder zeroes its usage fields; tokens come from content. A response split across lines is one request,
+    /// its input is the system prompt plus the conversation before it, and subagent files fold into the parent.
+    static func checkQoder() {
+        let now = AgentJSON_date("2026-09-30T12:00:00Z")
+        let zero = #""usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}"#
+        let prompt = String(repeating: "a", count: 3_200)
+        let main = [
+            #"{"type":"user","sessionId":"s1","cwd":"/p/app","timestamp":"2026-09-30T11:00:00Z","message":{"role":"user","content":"\#(prompt)"}}"#,
+            #"{"type":"assistant","sessionId":"s1","timestamp":"2026-09-30T11:00:01Z","message":{"id":"m1","model":"qfmodel","content":[{"type":"text","text":"\#(String(repeating: "b", count: 320))"}],\#(zero)}}"#,
+            #"{"type":"assistant","sessionId":"s1","timestamp":"2026-09-30T11:00:02Z","message":{"id":"m1","model":"qfmodel","stop_reason":"end_turn","content":[{"type":"text","text":"\#(String(repeating: "c", count: 320))"}],\#(zero)}}"#,
+        ].joined(separator: "\n")
+        let sub = #"{"type":"assistant","sessionId":"s1","timestamp":"2026-09-30T11:00:03Z","message":{"id":"m2","model":"qfmodel","content":"hi",\#(zero)}}"#
+        let parsed = AgentParsingSeams.parseQoder([
+            .init(path: "/q/p/s1.jsonl", modifiedAt: now, contents: main),
+            .init(path: "/q/p/s1/subagents/agent-x.jsonl", modifiedAt: now, contents: sub),
+        ], now: now)
+        precondition(parsed.sessions.count == 1, "Qoder subagents fold into their session (got \(parsed.sessions.count))")
+        precondition(parsed.usageEvents.count == 2, "Qoder: one event per response id")
+        guard let first = parsed.usageEvents.first(where: { $0.id.hasSuffix("|m1") }) else { preconditionFailure("Qoder m1 event") }
+        // Prompt text 3,200 bytes plus the "text"/"type" keys of nothing (plain string) → 1,000 tokens + 20k system prompt.
+        precondition(first.usage.inputTokens == 21_000, "Qoder input estimate (got \(first.usage.inputTokens ?? -1))")
+        // Two lines of 320 content bytes plus keys ("type","text" and the value "text") → 2 × (320 + 12) / 3.2.
+        precondition(first.usage.outputTokens == 208, "Qoder output estimate (got \(first.usage.outputTokens ?? -1))")
+        precondition(first.model == "Qwen3.8-Flash", "Qoder model display name")
+        precondition(first.cost == nil, "Qoder bills in credits, not dollars")
+        precondition((parsed.sessions[0].usage?.processedTokens ?? 0) > 21_000, "Qoder session totals")
     }
 
     private static func AgentJSON_date(_ string: String) -> Date {

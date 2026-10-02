@@ -34,6 +34,12 @@ public enum AgentParsingSeams {
         return parsed(AgentCodexReader.aggregate(states, cutoff: now.addingTimeInterval(-Double(historyDays) * 86_400), now: now))
     }
 
+    /// Parses in-memory Qoder transcripts; tokens are estimated from content.
+    public static func parseQoder(_ transcripts: [Transcript], now: Date, historyDays: Int = 90) -> Parsed {
+        let states = transcripts.map { ($0.path, $0.modifiedAt, feed($0.contents, into: QoderFileState())) }
+        return parsed(AgentQoderReader.aggregate(states, cutoff: now.addingTimeInterval(-Double(historyDays) * 86_400), now: now))
+    }
+
     /// Runs the real local reader for one agent (no process discovery, no network).
     public static func readLocal(agent: AgentKind, historyDays: Int) async -> Parsed {
         if agent == .openCode {

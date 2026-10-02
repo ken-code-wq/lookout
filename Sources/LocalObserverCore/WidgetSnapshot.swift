@@ -25,6 +25,19 @@ public struct WidgetSnapshot: Codable, Sendable {
         self.servers = servers
     }
 
+    // Lossy: an entry this build can't read (say, an agent added in a newer app) is dropped rather than
+    // failing the whole file, which would blank every widget.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = try c.decode(Int.self, forKey: .version)
+        generatedAt = try c.decode(Date.self, forKey: .generatedAt)
+        sessions = c.lossy([Session].self, .sessions)
+        providers = c.lossy([Provider].self, .providers)
+        glanceProviders = c.lossy([AgentKind].self, .glanceProviders)
+        today = (try? c.decode(Usage.self, forKey: .today)) ?? .empty
+        servers = c.lossy([Server].self, .servers)
+    }
+
     public struct Session: Codable, Sendable, Identifiable, Hashable {
         public var id: String
         public var agent: AgentKind
@@ -63,6 +76,14 @@ public struct WidgetSnapshot: Codable, Sendable {
             self.plan = plan
             self.windows = windows
             self.headlineID = headlineID
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            agent = try c.decode(AgentKind.self, forKey: .agent)
+            plan = (try? c.decode(String.self, forKey: .plan)) ?? ""
+            windows = c.lossy([Window].self, .windows)
+            headlineID = try? c.decode(String.self, forKey: .headlineID)
         }
 
         public var headline: Window? {
@@ -121,6 +142,17 @@ public struct WidgetSnapshot: Codable, Sendable {
             self.models = models
         }
 
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            processed = (try? c.decode(Int64.self, forKey: .processed)) ?? 0
+            cost = try? c.decode(Double.self, forKey: .cost)
+            costIsEstimated = (try? c.decode(Bool.self, forKey: .costIsEstimated)) ?? false
+            sessions = (try? c.decode(Int.self, forKey: .sessions)) ?? 0
+            cacheHitRate = try? c.decode(Double.self, forKey: .cacheHitRate)
+            hourly = c.lossy([Bucket].self, .hourly)
+            models = c.lossy([Model].self, .models)
+        }
+
         public static let empty = Usage(processed: 0, cost: nil, costIsEstimated: false, sessions: 0,
                                         cacheHitRate: nil, hourly: [], models: [])
     }
@@ -152,6 +184,15 @@ public struct WidgetSnapshot: Codable, Sendable {
             self.cost = cost
             self.share = share
         }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            title = try c.decode(String.self, forKey: .title)
+            agent = try? c.decode(AgentKind.self, forKey: .agent)
+            tokens = (try? c.decode(Int64.self, forKey: .tokens)) ?? 0
+            cost = try? c.decode(Double.self, forKey: .cost)
+            share = (try? c.decode(Double.self, forKey: .share)) ?? 0
+        }
     }
 
     public struct Server: Codable, Sendable, Hashable, Identifiable {
@@ -181,6 +222,20 @@ public struct WidgetSnapshot: Codable, Sendable {
             self.uptime = uptime
             self.icon = icon
         }
+    }
+}
+
+// MARK: - Lossy decoding
+
+/// Decodes whatever elements it can and skips the rest.
+private struct LossyElement<Element: Decodable>: Decodable {
+    var value: Element?
+    init(from decoder: Decoder) throws { value = try? Element(from: decoder) }
+}
+
+extension KeyedDecodingContainer {
+    func lossy<Element: Decodable>(_ type: [Element].Type, _ key: Key) -> [Element] {
+        ((try? decode([LossyElement<Element>].self, forKey: key)) ?? []).compactMap(\.value)
     }
 }
 

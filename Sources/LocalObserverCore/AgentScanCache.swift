@@ -60,12 +60,10 @@ enum AgentFileScanner {
     static let refreshByteBudget: UInt64 = 768 * 1_024 * 1_024
 
     static func stamp(for url: URL) -> AgentFileStamp? {
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
-              (attributes[.type] as? FileAttributeType) == .typeRegular else { return nil }
-        let size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
-        let modified = attributes[.modificationDate] as? Date ?? .distantPast
-        let inode = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0
-        return AgentFileStamp(size: size, modifiedAt: modified, inode: inode)
+        var info = stat()
+        guard stat(url.path, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else { return nil }
+        let modified = Date(timeIntervalSince1970: TimeInterval(info.st_mtimespec.tv_sec) + TimeInterval(info.st_mtimespec.tv_nsec) / 1e9)
+        return AgentFileStamp(size: UInt64(info.st_size), modifiedAt: modified, inode: UInt64(info.st_ino))
     }
 
     /// Regular files under `roots` modified since `cutoff`, newest first.
@@ -181,15 +179,20 @@ enum AgentFileScanner {
 /// Storage is process-wide: readers each hold their own instance per scan, and a fresh
 /// 15-second scan was re-walking the same project paths every time.
 final class AgentProjectNames: @unchecked Sendable {
-    private static let sharedNames: NSMutableDictionary = [:]
+    private static var sharedNames: [String: (name: String, at: Date)] = [:]
+    private static let lock = NSLock()
     /// Project folders grow markers (`.git`, `package.json`) after first sight; re-walk occasionally.
     private static let ttl: TimeInterval = 600
 
     func name(for path: String) -> String {
-        if let hit = AgentProjectNames.sharedNames[path] as? (String, Date),
-           Date.now.timeIntervalSince(hit.1) < Self.ttl { return hit.0 }
+        Self.lock.lock()
+        let hit = Self.sharedNames[path]
+        Self.lock.unlock()
+        if let hit, Date.now.timeIntervalSince(hit.at) < Self.ttl { return hit.name }
         let name = AgentDiscovery.projectName(for: path)
-        AgentProjectNames.sharedNames[path] = (name, Date.now)
+        Self.lock.lock()
+        Self.sharedNames[path] = (name, Date.now)
+        Self.lock.unlock()
         return name
     }
 }

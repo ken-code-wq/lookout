@@ -58,7 +58,7 @@ private struct AgentToggleRow: View {
                     .truncationMode(.middle)
                 HStack(spacing: 4) {
                     if agent.capabilities.sessions { Tag(text: "Sessions", color: .gray) }
-                    if agent.capabilities.tokens { Tag(text: "Tokens", color: .gray) }
+                    if agent.capabilities.tokens { Tag(text: agent.capabilities.estimatedTokens ? "Tokens (estimated)" : "Tokens", color: .gray) }
                     if AgentLimitClients.supportsAccountLimits(agent) { Tag(text: "Plan limits", color: .gray) }
                 }
                 .padding(.top, 2)
@@ -361,8 +361,19 @@ private struct MenuBarDockPane: View {
                     }
                 }
                 SettingsDivider()
+                SettingsRow(title: "Show agents", detail: "The running agents list. Off leaves just the limits") {
+                    Toggle("Show agents", isOn: $prefs.peekShowsAgents).toggleStyle(.switch).labelsHidden()
+                }
+                SettingsDivider()
                 SettingsRow(title: "Include limits", detail: "The three plan windows closest to running out") {
                     Toggle("Include limits", isOn: $prefs.peekShowsLimits).toggleStyle(.switch).labelsHidden()
+                }
+                SettingsDivider()
+                SettingsRow(title: "Limit style", detail: "Pie shows a ring with the percentage inside; Line shows a slim bar") {
+                    Picker("Limit style", selection: $prefs.peekLimitStyle) {
+                        ForEach(PeekLimitStyle.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented).labelsHidden().fixedSize()
                 }
                 SettingsDivider()
                 SettingsRow(title: "Glass", detail: "Clear shows more of what's behind; frosted is easier to read on busy backgrounds") {

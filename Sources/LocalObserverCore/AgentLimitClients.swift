@@ -54,8 +54,9 @@ public enum AgentLimitClients {
 
     static func minimumInterval(_ agent: AgentKind) -> TimeInterval {
         switch agent {
-        case .claude: return 180
-        case .codex: return 120
+        // Anthropic rate-limits this endpoint per account, shared with Claude Code itself.
+        case .claude: return 300
+        case .codex: return 300
         case .copilot, .cursor: return 300
         case .antigravity: return 600
         case .openCode, .pi, .qoder: return .infinity
@@ -146,6 +147,9 @@ public enum AgentLimitClients {
     // MARK: - Codex
 
     private static func fetchCodex() async -> AgentLimitOutcome {
+        // The HTTP endpoint is cheap; spawning `codex app-server` is not, so it only runs when HTTP can't answer.
+        let http = await fetchCodexWham()
+        if http.report.status == .connected, !http.report.windows.isEmpty { return http }
         let now = Date()
         if let executable = AgentLimitProcess.executable(named: "codex"),
            let data = await AgentLimitProcess.background({ AgentLimitCodexAppServer.readRateLimits(executable: executable) }) {
@@ -156,7 +160,7 @@ public enum AgentLimitClients {
                     source: "Codex app-server", message: parse.message))
             }
         }
-        return await fetchCodexWham()
+        return http
     }
 
     private static func fetchCodexWham() async -> AgentLimitOutcome {
@@ -351,14 +355,26 @@ actor AgentLimitCache {
         var fetchedAt: Date
         var blockedUntil: Date?
         var lastGood: AgentLimitReport?
+        /// Consecutive transient failures, for backoff.
+        var failures = 0
     }
+
+    /// A manual refresh still waits this long after the last request, so repeated clicks can't trip rate limits.
+    static let minimumForcedGap: TimeInterval = 45
 
     private var entries: [AgentKind: Entry] = [:]
     private var inFlight: [AgentKind: Task<AgentLimitOutcome, Never>] = [:]
+    /// Last good report per provider, kept on disk so a relaunch shows limits straight away instead of
+    /// asking every provider again (Anthropic answers 429 to clients that ask often).
+    private lazy var stored: [AgentKind: AgentLimitReport] = Self.loadStored()
 
     /// Drops cached reports for agents the user disconnected.
     func forget(except connected: Set<AgentKind>) {
         for agent in entries.keys where !connected.contains(agent) { entries[agent] = nil }
+        let dropped = stored.keys.filter { !connected.contains($0) }
+        guard !dropped.isEmpty else { return }
+        for agent in dropped { stored[agent] = nil }
+        persist()
     }
 
     func report(
@@ -369,8 +385,13 @@ actor AgentLimitCache {
     ) async -> AgentLimitReport {
         let now = Date()
         if let entry = entries[agent] {
-            if let blocked = entry.blockedUntil, blocked > now { return entry.report }
-            if !force, now.timeIntervalSince(entry.fetchedAt) < interval { return entry.report }
+            if let blocked = entry.blockedUntil, blocked > now { return Self.rolled(entry.report, now: now) }
+            let age = now.timeIntervalSince(entry.fetchedAt)
+            if age < (force ? Self.minimumForcedGap : interval) { return Self.rolled(entry.report, now: now) }
+        } else if let saved = stored[agent], let fetchedAt = saved.fetchedAt {
+            // First ask since launch: a recent saved report stands in for a request.
+            entries[agent] = Entry(report: saved, fetchedAt: fetchedAt, lastGood: saved)
+            if now.timeIntervalSince(fetchedAt) < interval { return Self.rolled(saved, now: now) }
         }
         let task: Task<AgentLimitOutcome, Never>
         if let existing = inFlight[agent] {
@@ -384,20 +405,70 @@ actor AgentLimitCache {
             inFlight[agent] = nil
             store(outcome, for: agent)
         }
-        return entries[agent]?.report ?? outcome.report
+        return Self.rolled(entries[agent]?.report ?? outcome.report, now: Date())
     }
 
     private func store(_ outcome: AgentLimitOutcome, for agent: AgentKind) {
-        let previousGood = entries[agent]?.lastGood
+        let previous = entries[agent]
         var report = outcome.report
-        var lastGood = previousGood
+        var lastGood = previous?.lastGood
+        var failures = 0
+        var blockedUntil = outcome.retryAfter
         if report.status == .connected {
             lastGood = report
-        } else if outcome.transient, var kept = previousGood {
-            kept.message = report.message
-            report = kept
+            stored[agent] = report
+            persist()
+        } else if outcome.transient {
+            // Back off harder each time: 1, 2, 4… minutes up to 30, never sooner than the provider asked.
+            failures = (previous?.failures ?? 0) + 1
+            let backoff = Date().addingTimeInterval(min(60 * pow(2, Double(failures - 1)), 1800))
+            blockedUntil = max(blockedUntil ?? backoff, backoff)
+            if var kept = lastGood {
+                kept.message = report.message
+                report = kept
+            }
         }
-        entries[agent] = Entry(report: report, fetchedAt: Date(), blockedUntil: outcome.retryAfter, lastGood: lastGood)
+        entries[agent] = Entry(report: report, fetchedAt: Date(), blockedUntil: blockedUntil, lastGood: lastGood, failures: failures)
+    }
+
+    /// A window whose reset has passed is known to be empty again, even if the provider hasn't been asked since.
+    static func rolled(_ report: AgentLimitReport, now: Date) -> AgentLimitReport {
+        var report = report
+        report.windows = report.windows.map { window in
+            guard let resetsAt = window.resetsAt, resetsAt <= now else { return window }
+            var window = window
+            window.usedPercent = 0
+            if let duration = window.windowDuration, duration > 0 {
+                var next = resetsAt
+                while next <= now { next = next.addingTimeInterval(duration) }
+                window.resetsAt = next
+            } else {
+                window.resetsAt = nil
+            }
+            return window
+        }
+        return report
+    }
+
+    // MARK: Disk
+
+    private static var fileURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("LocalObserver/limit-cache.json", isDirectory: false)
+    }
+
+    private static func loadStored() -> [AgentKind: AgentLimitReport] {
+        guard let data = try? Data(contentsOf: fileURL),
+              let reports = try? JSONDecoder().decode([AgentLimitReport].self, from: data) else { return [:] }
+        return Dictionary(reports.map { ($0.agent, $0) }, uniquingKeysWith: { lhs, _ in lhs })
+    }
+
+    private func persist() {
+        let reports = Array(stored.values)
+        let url = Self.fileURL
+        guard let data = try? JSONEncoder().encode(reports) else { return }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: url, options: .atomic)
     }
 }
 

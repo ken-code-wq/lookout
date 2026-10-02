@@ -3,7 +3,8 @@ import AppKit
 import LocalObserverCore
 import LocalObserverShelf
 
-/// The window's front page: what needs you, the day at a glance, then one card per pillar with a way into it.
+/// The window's front page: what needs you, the day at a glance, the year of agent activity, then one card per
+/// pillar with a way into it.
 struct HomePage: View {
     @ObservedObject var state: AppState
     @ObservedObject var agentStore: AgentStore
@@ -29,7 +30,7 @@ struct HomePage: View {
 
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                PageHeader(symbol: "house", title: "Home", subtitle: AnyView(summary(sessions: sessions, waiting: waiting, servers: servers)))
+                PageHeader(symbol: SidebarItem.home.symbol, title: SidebarItem.home.title, subtitle: AnyView(summary(sessions: sessions, waiting: waiting, servers: servers)))
 
                 if !waiting.isEmpty {
                     NeedsYouCard(sessions: waiting, open: open)
@@ -38,7 +39,12 @@ struct HomePage: View {
 
                 OverviewStrip(sessions: sessions, servers: servers, today: agentStore.todayTotals,
                               tightest: windows.max { $0.usedPercent < $1.usedPercent }, navigate: navigate)
-                    .padding(.bottom, 28)
+                    .padding(.bottom, 16)
+
+                DashboardActivityCard(store: agentStore, metric: $heatmapMetric) { day, agent in
+                    openUsage(day: day, agent: agent)
+                }
+                .padding(.bottom, 16)
 
                 pair {
                     HomeCard(title: "Agents", symbol: "sparkles", count: sessions.count,
@@ -69,24 +75,6 @@ struct HomePage: View {
                     HomeCard(title: "Plan limits", symbol: "gauge.with.dots.needle.33percent", count: nil,
                              link: "Plan limits", action: { navigate(.agentLimits) }) {
                         limitsCard(windows)
-                    }
-                }
-                .padding(.bottom, 16)
-
-                HomeCard(title: "Year at a glance", symbol: "calendar", count: nil,
-                         link: "Usage", action: { navigate(.agentUsage) }) {
-                    if agentStore.hasUsageHistory {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Picker("Metric", selection: $heatmapMetric) {
-                                ForEach(AgentMetricKind.allCases) { Text($0.rawValue).tag($0) }
-                            }
-                            .pickerStyle(.segmented)
-                            .labelsHidden()
-                            .fixedSize()
-                            UsageHeatmapView(days: agentStore.heatmap, metric: heatmapMetric)
-                        }
-                    } else {
-                        HomeEmpty(symbol: "calendar", text: "The year grid fills in once your agents have run.")
                     }
                 }
                 .padding(.bottom, 16)
@@ -203,6 +191,17 @@ struct HomePage: View {
 
     private func navigate(_ page: SidebarItem) {
         withAnimation(.snappy(duration: 0.2)) { state.sidebar = page }
+    }
+
+    /// The Usage page narrowed to what the dashboard was showing: one day or the whole year, one agent or all.
+    private func openUsage(day: Date?, agent: AgentKind?) {
+        var filter = AgentUsageFilter()
+        if let day { filter.setCustom(from: day, to: day) } else { filter.setPreset(.oneYear) }
+        filter.agents = agent.map { [$0] } ?? []
+        filter.metric = heatmapMetric
+        filter.grouping = .model
+        agentStore.filter = filter
+        navigate(.agentUsage)
     }
 
     private func open(_ session: AgentSession) {

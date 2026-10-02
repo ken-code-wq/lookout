@@ -107,6 +107,21 @@ struct LocalObserverVerification {
         )
         precondition(abs((window.elapsedFraction(now: now) ?? 0) - 0.4) < 0.001, "Window elapsed fraction failed")
 
+        ParsingChecks.checkQoder()
+
+        // Dashboard streaks: active today and the two days before (current 3), a 4-day run earlier (longest 4).
+        let heatCalendar = Calendar.current
+        let today = heatCalendar.startOfDay(for: now)
+        func heatDay(_ offset: Int, _ tokens: Int64) -> AgentHeatmapDay {
+            var day = AgentHeatmapDay(date: heatCalendar.date(byAdding: .day, value: -offset, to: today)!)
+            day.processed = tokens
+            return day
+        }
+        let stats = AgentHeatmapStats(days: [0, 1, 2, 10, 11, 12, 13, 20].map { heatDay($0, $0 == 11 ? 900 : 100) }, metric: .tokens, now: now)
+        precondition(stats.currentStreak == 3 && stats.longestStreak == 4, "Heatmap streaks (\(stats.currentStreak), \(stats.longestStreak))")
+        precondition(stats.activeDays == 8 && stats.total == 1_600 && stats.busiestValue == 900, "Heatmap totals")
+        let yesterdayOnly = AgentHeatmapStats(days: [heatDay(1, 5), heatDay(2, 5)], metric: .tokens, now: now)
+        precondition(yesterdayOnly.currentStreak == 2, "A streak survives until today ends")
         LimitChecks.run()
         ShelfChecks.run()
 

@@ -163,6 +163,15 @@ enum PeekTodayMetric: String, CaseIterable, Identifiable {
     }
 }
 
+/// How Agent Peek draws each plan window: a pie-style ring with the percentage inside, or a slim line.
+enum PeekLimitStyle: String, CaseIterable, Identifiable {
+    case pie, line
+
+    var id: String { rawValue }
+    var title: String { self == .pie ? "Pie" : "Line" }
+    var symbol: String { self == .pie ? "chart.pie" : "chart.bar.fill" }
+}
+
 /// Agent Peek's footprint. Discrete modes rather than free resizing, like the notch's modes: each one decides
 /// what it leaves out instead of squeezing the same content narrower.
 enum PeekSize: String, CaseIterable, Identifiable, Codable {
@@ -238,6 +247,11 @@ final class Preferences: ObservableObject {
     @Published var dockIconStyle: DockIconStyle { didSet { defaults.set(dockIconStyle.rawValue, forKey: Keys.dockIconStyle) } }
     @Published var peekOnAllSpaces: Bool { didSet { defaults.set(peekOnAllSpaces, forKey: Keys.peekOnAllSpaces) } }
     @Published var peekShowsLimits: Bool { didSet { defaults.set(peekShowsLimits, forKey: Keys.peekShowsLimits) } }
+    /// Whether Agent Peek lists running agents at all. Off leaves just the limits.
+    @Published var peekShowsAgents: Bool { didSet { defaults.set(peekShowsAgents, forKey: Keys.peekShowsAgents) } }
+    @Published var peekLimitStyle: PeekLimitStyle { didSet { defaults.set(peekLimitStyle.rawValue, forKey: Keys.peekLimitStyle) } }
+    /// False until the user has answered Peek's "what should it show?" prompt (or dismissed it).
+    @Published var peekSetupDone: Bool { didSet { defaults.set(peekSetupDone, forKey: Keys.peekSetupDone) } }
     /// Agent Peek's outer glass: the see-through Liquid Glass variant, or frosted.
     @Published var peekTodayMetric: PeekTodayMetric { didSet { defaults.set(peekTodayMetric.rawValue, forKey: Keys.peekTodayMetric) } }
     @Published var peekClearGlass: Bool { didSet { defaults.set(peekClearGlass, forKey: Keys.peekClearGlass) } }
@@ -301,6 +315,9 @@ final class Preferences: ObservableObject {
         static let dockIconStyle = "LocalObserver.dockIconStyle"
         static let peekOnAllSpaces = "LocalObserver.peekOnAllSpaces"
         static let peekShowsLimits = "LocalObserver.peekShowsLimits"
+        static let peekShowsAgents = "LocalObserver.peekShowsAgents"
+        static let peekLimitStyle = "LocalObserver.peekLimitStyle"
+        static let peekSetupDone = "LocalObserver.peekSetupDone"
         static let peekVisible = "LocalObserver.peekVisible"
         static let peekClearGlass = "LocalObserver.peekClearGlass"
         static let peekTodayMetric = "LocalObserver.peekTodayMetric"
@@ -350,6 +367,9 @@ final class Preferences: ObservableObject {
         dockIconStyle = DockIconStyle(rawValue: defaults.string(forKey: Keys.dockIconStyle) ?? "") ?? .standard
         peekOnAllSpaces = defaults.object(forKey: Keys.peekOnAllSpaces) as? Bool ?? true
         peekShowsLimits = defaults.object(forKey: Keys.peekShowsLimits) as? Bool ?? true
+        peekShowsAgents = defaults.object(forKey: Keys.peekShowsAgents) as? Bool ?? true
+        peekLimitStyle = PeekLimitStyle(rawValue: defaults.string(forKey: Keys.peekLimitStyle) ?? "") ?? .pie
+        peekSetupDone = defaults.bool(forKey: Keys.peekSetupDone)
         peekVisible = defaults.bool(forKey: Keys.peekVisible)
         peekClearGlass = defaults.object(forKey: Keys.peekClearGlass) as? Bool ?? true
         peekTodayMetric = PeekTodayMetric(rawValue: defaults.string(forKey: Keys.peekTodayMetric) ?? "") ?? .cost

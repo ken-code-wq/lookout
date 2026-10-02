@@ -21,6 +21,13 @@ final class MediaController: ObservableObject {
         var isPlaying: Bool
         var fetchedAt: Date
 
+        /// Equality ignoring `fetchedAt` (which changes on every update) so unchanged state isn't republished.
+        func sameContent(as other: Track) -> Bool {
+            bundleID == other.bundleID && appName == other.appName && title == other.title
+                && artist == other.artist && album == other.album && duration == other.duration
+                && position == other.position && isPlaying == other.isPlaying
+        }
+
         /// Position now, advancing between updates while playing.
         func position(at date: Date) -> Double {
             guard isPlaying else { return position }
@@ -41,6 +48,10 @@ final class MediaController: ObservableObject {
     private var buffer = Data()
     private var fallbackTimer: Timer?
     private let scriptQueue = DispatchQueue(label: "LocalObserver.media")
+    private var restartDelay: TimeInterval = 3
+    private var restartCount = 0
+    private var lastArtworkData: Data?
+    private static let maxBridgeRestarts = 5
 
     func start() {
         guard bridge == nil, fallbackTimer == nil else { return }
@@ -128,9 +139,18 @@ final class MediaController: ObservableObject {
         process.terminationHandler = { _ in
             // Restart after a pause if it dies (e.g. after sleep); fall back if it can't run at all.
             Task { @MainActor in
-                MediaController.shared.bridge = nil
-                try? await Task.sleep(for: .seconds(3))
-                MediaController.shared.start()
+                let media = MediaController.shared
+                media.bridge = nil
+                media.restartCount += 1
+                // Give up after a few attempts and poll Spotify/Music directly instead.
+                if media.restartCount > Self.maxBridgeRestarts {
+                    media.startFallback()
+                    return
+                }
+                let delay = media.restartDelay
+                media.restartDelay = min(delay * 2, 60)
+                try? await Task.sleep(for: .seconds(delay))
+                media.start()
             }
         }
         do {
@@ -153,9 +173,13 @@ final class MediaController: ObservableObject {
     }
 
     private func apply(_ object: [String: Any]) {
+        // A healthy message means the bridge works: reset the restart backoff.
+        restartCount = 0
+        restartDelay = 3
         guard let title = object["title"] as? String, !title.isEmpty else {
-            track = nil
-            artwork = nil
+            if track != nil { track = nil }
+            if artwork != nil { artwork = nil }
+            lastArtworkData = nil
             return
         }
         let bundleID = object["bundle"] as? String ?? ""
@@ -173,11 +197,15 @@ final class MediaController: ObservableObject {
             fetchedAt: .now
         )
         let trackChanged = track.map { ($0.bundleID, $0.title, $0.artist) != (next.bundleID, next.title, next.artist) } ?? true
-        track = next
+        if track?.sameContent(as: next) != true { track = next }
         if let encoded = object["artwork"] as? String, let data = Data(base64Encoded: encoded) {
-            artwork = NSImage(data: data)
+            if data != lastArtworkData {
+                lastArtworkData = data
+                artwork = NSImage(data: data)
+            }
         } else if trackChanged {
-            artwork = nil
+            lastArtworkData = nil
+            if artwork != nil { artwork = nil }
         }
     }
 
@@ -203,9 +231,11 @@ final class MediaController: ObservableObject {
     }
 
     private func startFallback() {
+        guard fallbackTimer == nil else { return }
         let timer = Timer(timeInterval: 2, repeats: true) { _ in
             MainActor.assumeIsolated { MediaController.shared.pollFallback() }
         }
+        timer.tolerance = 1
         RunLoop.main.add(timer, forMode: .common)
         fallbackTimer = timer
         pollFallback()
@@ -213,7 +243,11 @@ final class MediaController: ObservableObject {
 
     private func pollFallback() {
         let running = FallbackPlayer.allCases.filter(\.isRunning)
-        guard !running.isEmpty else { track = nil; artwork = nil; return }
+        guard !running.isEmpty else {
+            if track != nil { track = nil }
+            if artwork != nil { artwork = nil }
+            return
+        }
         let separator = "‖"
         let scripts = running.map { player -> (FallbackPlayer, String) in
             let scale = player == .spotify ? "/ 1000" : ""
@@ -241,9 +275,14 @@ final class MediaController: ObservableObject {
             }
             Task { @MainActor in
                 let chosen = found.first(where: \.isPlaying) ?? found.first
-                MediaController.shared.permissionDenied = denied && found.isEmpty
-                if chosen?.title != MediaController.shared.track?.title { MediaController.shared.artwork = nil }
-                MediaController.shared.track = chosen
+                let media = MediaController.shared
+                let isDenied = denied && found.isEmpty
+                if media.permissionDenied != isDenied { media.permissionDenied = isDenied }
+                if chosen?.title != media.track?.title, media.artwork != nil { media.artwork = nil }
+                // Keep the existing value (and its fetchedAt) when nothing but the clock moved.
+                if let chosen, let current = media.track, current.sameContent(as: chosen) { return }
+                if chosen == nil && media.track == nil { return }
+                media.track = chosen
             }
         }
     }

@@ -123,27 +123,37 @@ struct AgentPeekView: View {
 
     private var size: PeekSize { prefs.peekSize }
 
+    private var showsAgents: Bool { prefs.peekShowsAgents }
+    private var showsLimits: Bool { prefs.peekShowsLimits && !(size == .small ? smallWindows : windows).isEmpty }
+
     var body: some View {
         VStack(alignment: .leading, spacing: size == .small ? 8 : 10) {
             header
-            if size == .small {
+            if !prefs.peekSetupDone {
+                PeekSetupCard(prefs: prefs, compact: size == .small)
+                    .transition(.opacity.combined(with: .scale(scale: 0.97)))
+            } else if size == .small {
                 // No section chrome at Small: agents, then limits, grouped by spacing alone.
-                compactAgentList
-                if prefs.peekShowsLimits && !smallWindows.isEmpty { compactLimits }
+                if showsAgents { compactAgentList }
+                if showsLimits { compactLimits }
+                if !showsAgents && !showsLimits { nothingShown }
             } else {
-                GlassGroup(spacing: 6) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        PeekSectionHeader(title: "Agents", key: "agents", count: sessions.count)
-                        if !prefs.isCollapsed(peek: "agents") { agentList }
+                if showsAgents {
+                    GlassGroup(spacing: 6) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            PeekSectionHeader(title: "Agents", key: "agents", count: sessions.count)
+                            if !prefs.isCollapsed(peek: "agents") { agentList }
+                        }
                     }
                 }
-                if prefs.peekShowsLimits && !windows.isEmpty {
+                if showsLimits {
                     VStack(alignment: .leading, spacing: 6) {
                         PeekSectionHeader(title: "Limits", key: "limits", count: shownWindows.count)
                         if !prefs.isCollapsed(peek: "limits") { limitTiles }
                     }
                 }
-                if !prefs.peekHiddenAgents.isEmpty { hiddenNote }
+                if !showsAgents && !showsLimits { nothingShown }
+                if showsAgents && !prefs.peekHiddenAgents.isEmpty { hiddenNote }
             }
         }
         .padding(size == .small ? 10 : 12)
@@ -154,6 +164,23 @@ struct AgentPeekView: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: prefs.collapsedPeekGroups)
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: sessions.map(\.id))
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: size)
+        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: prefs.peekSetupDone)
+    }
+
+    /// Everything is switched off: say so, and say how to get it back.
+    private var nothingShown: some View {
+        Button { withAnimation(.snappy) { prefs.peekSetupDone = false } } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "slider.horizontal.3")
+                Text("Nothing to show. Choose what Peek shows")
+            }
+            .font(.system(size: 11.5))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 40)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: Header
@@ -345,9 +372,14 @@ struct AgentPeekView: View {
                 }
             }
         }
-        Toggle("Show limits", isOn: $prefs.peekShowsLimits)
+        Toggle("Show agents", isOn: Binding(get: { prefs.peekShowsAgents }, set: { on in withAnimation(.snappy) { prefs.peekShowsAgents = on } }))
+        Toggle("Show limits", isOn: Binding(get: { prefs.peekShowsLimits }, set: { on in withAnimation(.snappy) { prefs.peekShowsLimits = on } }))
+        Picker("Limits as", selection: Binding(get: { prefs.peekLimitStyle }, set: { new in withAnimation(.snappy) { prefs.peekLimitStyle = new } })) {
+            ForEach(PeekLimitStyle.allCases) { Label($0.title, systemImage: $0.symbol).tag($0) }
+        }
+        Button("Choose what Peek shows…") { withAnimation(.snappy) { prefs.peekSetupDone = false } }
         Toggle("Clear glass", isOn: $prefs.peekClearGlass)
-        if size != .small {
+        if size != .small && showsAgents && showsLimits {
             Button(prefs.collapsedPeekGroups.isEmpty ? "Collapse all" : "Expand all") {
                 withAnimation(.snappy) { prefs.collapsedPeekGroups = prefs.collapsedPeekGroups.isEmpty ? ["agents", "limits"] : [] }
             }
@@ -443,8 +475,14 @@ struct AgentPeekView: View {
         GlassGroup(spacing: 6) {
             HStack(spacing: 6) {
                 ForEach(shownWindows) { window in
-                    LimitTile(window: window, showsCaption: size == .large)
-                        .onTapGesture { openMain(.agentLimits) }
+                    Group {
+                        if prefs.peekLimitStyle == .pie {
+                            LimitTile(window: window, showsCaption: size == .large)
+                        } else {
+                            LimitBarTile(window: window, showsCaption: size == .large)
+                        }
+                    }
+                    .onTapGesture { openMain(.agentLimits) }
                 }
             }
         }
@@ -453,7 +491,7 @@ struct AgentPeekView: View {
     private var compactLimits: some View {
         VStack(spacing: 2) {
             ForEach(smallWindows) { window in
-                CompactLimitLine(window: window)
+                CompactLimitLine(window: window, style: prefs.peekLimitStyle)
                     .onTapGesture { openMain(.agentLimits) }
             }
         }
@@ -751,17 +789,34 @@ private struct LimitTile: View {
 /// No ring, chip, or caption: at 200pt the name and the two numbers are what fit.
 private struct CompactLimitLine: View {
     var window: AgentQuotaWindow
+    var style: PeekLimitStyle = .pie
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
+            if style == .line {
+                VStack(spacing: 3) { row(context.date); LimitMeter(window: window, height: 4, showsPace: true).padding(.horizontal, 6) }
+                    .padding(.vertical, 2)
+            } else {
+                row(context.date)
+            }
+        }
+        .help([window.sessionTimeLeft(at: .now).map { "\(window.agent.name) \(window.label.lowercased()), \($0)" }
+                ?? "\(window.agent.name) \(window.label.lowercased())",
+               "\(Int(window.usedPercent.rounded()))% used"].joined(separator: "\n"))
+    }
+
+    private func row(_ date: Date) -> some View {
             HStack(spacing: 6) {
+                if style == .pie {
+                    ZStack { ProviderRing(windows: [window], lineWidth: 2.5) }.frame(width: 16, height: 16)
+                }
                 Text(window.agent.shortName)
                     .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
                     .layoutPriority(1)
                 Spacer(minLength: 4)
                 Group {
-                    if let left = window.sessionTimeLeft(at: context.date, suffix: false) {
+                    if let left = window.sessionTimeLeft(at: date, suffix: false) {
                         // The hourglass says "remaining" where there's no room for the word.
                         Label(left, systemImage: "hourglass").labelStyle(PeekTightLabel())
                     } else {
@@ -778,10 +833,122 @@ private struct CompactLimitLine: View {
             .padding(.horizontal, 6)
             .frame(height: 22)
             .contentShape(Rectangle())
+    }
+}
+
+/// The Line style of a limit tile: same facts as the pie tile, with a slim bar (and its even-pace tick) in place of the ring.
+private struct LimitBarTile: View {
+    var window: AgentQuotaWindow
+    var showsCaption = true
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            let deviation = PaceDeviation(window: window, now: context.date)
+            let color: Color = switch deviation.kind {
+            case .ahead: .orange
+            case .exhausted: .red
+            case .under: .green
+            case .onPace, .unknown: .secondary
+            }
+            let warning = deviation.kind == .ahead || deviation.kind == .exhausted
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 4) {
+                    AgentIconView(agent: window.agent, size: 11)
+                    Text(window.agent.shortName).font(.system(size: 11, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.8)
+                    Spacer(minLength: 2)
+                    Text("\(Int(window.usedPercent.rounded()))%")
+                        .font(.system(size: 12.5, weight: .bold, design: .rounded).monospacedDigit())
+                        .fixedSize()
+                }
+                LimitMeter(window: window, height: 5)
+                HStack(spacing: 4) {
+                    Text(window.label).font(.system(size: 9.5)).foregroundStyle(.secondary).lineLimit(1)
+                    Spacer(minLength: 2)
+                    Text(window.sessionTimeLeft(at: context.date) ?? deviation.chip)
+                        .font(.system(size: 9.5, weight: .medium).monospacedDigit())
+                        .foregroundStyle(warning ? AnyShapeStyle(color) : AnyShapeStyle(.secondary))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                }
+                if showsCaption {
+                    Text(deviation.caption)
+                        .font(.system(size: 9.5, weight: warning ? .medium : .regular))
+                        .foregroundStyle(warning ? AnyShapeStyle(color) : AnyShapeStyle(.tertiary))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                }
+            }
+            .padding(.vertical, 10)
+            .padding(.horizontal, 9)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .liquidGlass(RoundedRectangle(cornerRadius: 18, style: .continuous), tint: warning ? color.opacity(0.12) : nil, interactive: true)
+            .help("\(window.agent.name) \(window.label.lowercased())\n\(deviation.advice)")
         }
-        .help([window.sessionTimeLeft(at: .now).map { "\(window.agent.name) \(window.label.lowercased()), \($0)" }
-                ?? "\(window.agent.name) \(window.label.lowercased())",
-               "\(Int(window.usedPercent.rounded()))% used"].joined(separator: "\n"))
+    }
+}
+
+/// First-run (and "Choose what Peek shows…") prompt: what to list, and how limits are drawn.
+private struct PeekSetupCard: View {
+    @ObservedObject var prefs: Preferences
+    var compact: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: compact ? 8 : 12) {
+            Text("What should Peek show?").font(.system(size: compact ? 12 : 13, weight: .semibold))
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("Running agents", isOn: $prefs.peekShowsAgents)
+                Toggle("Plan limits and what's left", isOn: $prefs.peekShowsLimits)
+            }
+            .toggleStyle(.checkbox)
+            .font(.system(size: 12))
+            if prefs.peekShowsLimits {
+                HStack(spacing: 6) {
+                    ForEach(PeekLimitStyle.allCases) { style in
+                        let selected = prefs.peekLimitStyle == style
+                        Button { withAnimation(.snappy) { prefs.peekLimitStyle = style } } label: {
+                            VStack(spacing: 5) {
+                                preview(style)
+                                Text(style.title).font(.system(size: 10.5, weight: selected ? .semibold : .regular))
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .background(selected ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.05),
+                                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .strokeBorder(selected ? Color.accentColor.opacity(0.7) : .clear, lineWidth: 1.2))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            HStack {
+                Text("Change it any time: right-click Peek.").font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1)
+                Spacer(minLength: 4)
+                Button("Done") { withAnimation(.snappy) { prefs.peekSetupDone = true } }
+                    .buttonStyle(.borderedProminent).controlSize(.small)
+            }
+        }
+        .padding(compact ? 10 : 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .liquidGlass(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    @ViewBuilder private func preview(_ style: PeekLimitStyle) -> some View {
+        if style == .pie {
+            ZStack {
+                Circle().stroke(Color.primary.opacity(0.15), lineWidth: 4)
+                Circle().trim(from: 0, to: 0.62).stroke(Color.accentColor, style: StrokeStyle(lineWidth: 4, lineCap: .round)).rotationEffect(.degrees(-90))
+            }
+            .frame(width: 26, height: 26)
+        } else {
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(0.15))
+                Capsule().fill(Color.accentColor).frame(width: 26)
+            }
+            .frame(width: 42, height: 5)
+            .frame(height: 26)
+        }
     }
 }
 

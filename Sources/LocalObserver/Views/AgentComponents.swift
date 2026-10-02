@@ -113,7 +113,8 @@ struct AgentStateTag: View {
     }
 }
 
-/// A live-activity dot. Holds still when Reduce Motion is on.
+/// A live-activity dot. Pulses a few times when it appears, then holds still: an endless animation here kept
+/// the always-visible notch and Peek producing frames. Also still when Reduce Motion is on.
 struct PulsingDot: View {
     var color: Color
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -126,7 +127,7 @@ struct PulsingDot: View {
             .opacity(reduceMotion ? 1 : (on ? 0.35 : 1))
             .onAppear {
                 guard !reduceMotion else { return }
-                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { on = true }
+                withAnimation(.easeInOut(duration: 0.9).repeatCount(4, autoreverses: true)) { on = true }
             }
     }
 }

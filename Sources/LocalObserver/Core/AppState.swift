@@ -17,7 +17,7 @@ enum SidebarItem: Hashable {
 
     var title: String {
         switch self {
-        case .home: return "Home"
+        case .home: return "Dashboard"
         case .shelf: return "Shelf"
         case .clipboard: return "Clipboard"
         case .all: return "All servers"
@@ -32,7 +32,7 @@ enum SidebarItem: Hashable {
 
     var symbol: String {
         switch self {
-        case .home: return "house"
+        case .home: return "square.grid.2x2"
         case .shelf: return "tray.full"
         case .clipboard: return "doc.on.clipboard"
         case .all: return "server.rack"
@@ -165,7 +165,8 @@ final class AppState: ObservableObject {
         timer = nil
         guard autoRefresh else { return }
         timerFast = Self.uiVisible
-        let interval: TimeInterval = timerFast ? 4.0 : 12.0
+        // Menu-bar-only (no visible window): the notch/widgets don't need sub-30s port freshness.
+        let interval: TimeInterval = timerFast ? 4.0 : 30.0
         let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 // Re-installed each tick so the cadence follows window visibility:
@@ -179,7 +180,9 @@ final class AppState: ObservableObject {
     }
 
     private static var uiVisible: Bool {
-        NSApp.windows.contains { $0.isVisible && $0.canBecomeMain && !$0.isMiniaturized }
+        NSApp.windows.contains {
+            $0.isVisible && $0.canBecomeMain && !$0.isMiniaturized && $0.occlusionState.contains(.visible)
+        }
     }
 
     /// Coalesces: if a scan is already running, this call is a no-op.
@@ -231,13 +234,27 @@ final class AppState: ObservableObject {
         probeFailures = probeFailures.filter { alive.contains($0.key) }
         stopping = stopping.filter { alive.contains($0) }
 
+        // cpu/rss/uptime vary every scan; carry the old values forward unless they moved meaningfully,
+        // so an idle list doesn't re-render the always-on notch/peek and rebuild widget snapshots.
+        for i in next.indices {
+            guard let old = previous[next[i].id] else { continue }
+            let cpuMoved = abs(next[i].cpu - old.cpu) >= 5
+            let rssMoved = abs(next[i].rssKB - old.rssKB) > max(old.rssKB / 10, 10_240)
+            let uptimeMoved = abs(next[i].uptime - old.uptime) >= 60 || next[i].uptime < old.uptime
+            if !cpuMoved { next[i].cpu = old.cpu }
+            if !rssMoved { next[i].rssKB = old.rssKB }
+            if !uptimeMoved { next[i].uptime = old.uptime }
+        }
+
         if next.map(\.id) != servers.map(\.id) {
             withAnimation(.snappy(duration: 0.28)) { servers = next }
         } else if next != servers {
             servers = next
         }
         if let sel = selection, !alive.contains(sel) { selection = nil }
-        lastScan = Date()
+        // `lastScan` only feeds relative-time labels, so republish at most once a minute (or on first scan).
+        let now = Date()
+        if lastScan == nil || now.timeIntervalSince(lastScan!) >= 60 { lastScan = now }
     }
 
     // MARK: - derived

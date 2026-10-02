@@ -29,14 +29,20 @@ final class LiveSurfaces: NSObject, NSWindowDelegate {
         self.state = state
         self.agentStore = agentStore
 
-        Publishers.Merge3(
+        // Dock/widget surfaces don't need to track every store write: throttle (not debounce, which constant
+        // churn would starve) so they refresh at most every few seconds.
+        Publishers.Merge(
             state.objectWillChange.map { _ in () },
-            agentStore.objectWillChange.map { _ in () },
-            prefs.objectWillChange.map { _ in () }
+            agentStore.objectWillChange.map { _ in () }
         )
-        .debounce(for: .milliseconds(250), scheduler: RunLoop.main)
+        .throttle(for: .seconds(5), scheduler: RunLoop.main, latest: true)
         .sink { [weak self] in self?.update() }
         .store(in: &cancellables)
+        // Settings changes should show up promptly.
+        prefs.objectWillChange
+            .debounce(for: .milliseconds(250), scheduler: RunLoop.main)
+            .sink { [weak self] in self?.update() }
+            .store(in: &cancellables)
 
         prefs.$showDockIcon
             .removeDuplicates()

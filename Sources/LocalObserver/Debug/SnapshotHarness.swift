@@ -195,15 +195,29 @@ enum SnapshotHarness {
             let peekState = AppState()
             let savedSize = Preferences.shared.peekSize
             LiquidGlass.forceFallback = true
-            for size in PeekSize.allCases where wanted("peek-\(size.rawValue)") {
-                Preferences.shared.peekSize = size
-                let view = AnyView(AgentPeekView(agentStore: store, state: peekState) { _ in }
-                    .frame(width: 336, height: 620, alignment: .topLeading))
-                for dark in [false, true] {
-                    let url = directory.appendingPathComponent("peek-\(size.rawValue)-\(dark ? "dark" : "light").png")
-                    await render(view, size: CGSize(width: 336, height: 620), dark: dark, to: url)
+            let prefs = Preferences.shared
+            let saved = (prefs.peekShowsAgents, prefs.peekShowsLimits, prefs.peekLimitStyle, prefs.peekSetupDone)
+            // Each size in each configuration: pie (the default), line, agents off, and the first-run prompt.
+            let variants: [(String, Bool, PeekLimitStyle, Bool)] = [
+                ("", true, .pie, true), ("-line", true, .line, true), ("-noagents", false, .pie, true), ("-noagents-line", false, .line, true),
+                ("-setup", true, .pie, false),
+            ]
+            for size in PeekSize.allCases {
+                for (suffix, agents, style, done) in variants where wanted("peek-\(size.rawValue)\(suffix)") {
+                    prefs.peekSize = size
+                    prefs.peekShowsAgents = agents
+                    prefs.peekShowsLimits = true
+                    prefs.peekLimitStyle = style
+                    prefs.peekSetupDone = done
+                    let view = AnyView(AgentPeekView(agentStore: store, state: peekState) { _ in }
+                        .frame(width: 336, height: 620, alignment: .topLeading))
+                    for dark in [false, true] {
+                        let url = directory.appendingPathComponent("peek-\(size.rawValue)\(suffix)-\(dark ? "dark" : "light").png")
+                        await render(view, size: CGSize(width: 336, height: 620), dark: dark, to: url)
+                    }
                 }
             }
+            (prefs.peekShowsAgents, prefs.peekShowsLimits, prefs.peekLimitStyle, prefs.peekSetupDone) = saved
             Preferences.shared.peekSize = savedSize
             LiquidGlass.forceFallback = false
             print("Snapshots written to \(directory.path)")

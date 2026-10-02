@@ -150,15 +150,36 @@ public enum AgentDiscovery {
         return nil
     }
 
+    /// `classify` verdicts by command line (nil verdicts included), so a refresh doesn't re-classify every process on the machine.
+    private final class ClassifyCache: @unchecked Sendable {
+        var kinds: [String: AgentKind?] = [:]
+        let lock = NSLock()
+    }
+    private static let classifyCache = ClassifyCache()
+
     /// Agent processes worth listing: classified, enabled, not spawned by us, and not a child of another process of the same agent.
     static func agentProcesses(in table: [Int32: ProcessRecord], enabledAgents: Set<AgentKind>) -> [(AgentKind, AgentProcess)] {
         let ownPID = ProcessInfo.processInfo.processIdentifier
         var kinds: [Int32: AgentKind] = [:]
+        var seenKeys = Set<String>()
+        classifyCache.lock.lock()
         for (pid, record) in table {
-            if let agent = classify(processName: record.process.processName, arguments: record.arguments) {
-                kinds[pid] = agent
+            let key = record.process.processName + "\u{0}" + record.arguments
+            seenKeys.insert(key)
+            let agent: AgentKind?
+            if let hit = classifyCache.kinds[key] {
+                agent = hit
+            } else {
+                agent = classify(processName: record.process.processName, arguments: record.arguments)
+                classifyCache.kinds[key] = .some(agent)
             }
+            if let agent { kinds[pid] = agent }
         }
+        // Forget processes that exited so the cache tracks the live table.
+        if classifyCache.kinds.count > seenKeys.count {
+            classifyCache.kinds = classifyCache.kinds.filter { seenKeys.contains($0.key) }
+        }
+        classifyCache.lock.unlock()
         return kinds.compactMap { pid, agent -> (AgentKind, AgentProcess)? in
             guard enabledAgents.contains(agent), let record = table[pid] else { return nil }
             if record.process.parentPID == ownPID { return nil }
@@ -180,7 +201,7 @@ public enum AgentDiscovery {
         let system = await background {
             let table = processTable(now: discoveredAt)
             let classified = agentProcesses(in: table, enabledAgents: enabledAgents)
-            let directories = workingDirectories(pids: Set(classified.map { $0.1.pid }))
+            let directories = workingDirectories(for: classified.map { $0.1 })
             return classified.map { agent, process in
                 var enriched = process
                 enriched.workingDirectory = directories[process.pid] ?? ""
@@ -204,9 +225,13 @@ public enum AgentDiscovery {
         }
 
         usageEvents = deduplicate(usageEvents)
-        let sessionsByID = Dictionary(grouping: historicalSessions, by: \.id)
-        historicalSessions = sessionsByID.values.compactMap { $0.max { $0.updatedAt < $1.updatedAt } }
-            .sorted { $0.updatedAt > $1.updatedAt }
+        var latestSession: [String: AgentSession] = [:]
+        latestSession.reserveCapacity(historicalSessions.count)
+        for session in historicalSessions {
+            if let existing = latestSession[session.id], existing.updatedAt >= session.updatedAt { continue }
+            latestSession[session.id] = session
+        }
+        historicalSessions = latestSession.values.sorted { $0.updatedAt > $1.updatedAt }
         let quotasByID = Dictionary(grouping: quotas, by: \.id)
         quotas = quotasByID.values.compactMap { $0.max { $0.observedAt < $1.observedAt } }
             .sorted { lhs, rhs in
@@ -244,10 +269,11 @@ public enum AgentDiscovery {
     /// newest first, each transcript used once. Unpaired processes still appear, just without usage.
     static func pairRunning(_ processes: [(AgentKind, AgentProcess)], with sessions: [AgentSession], now: Date) -> [AgentSession] {
         var claimed = Set<String>()
+        let names = AgentProjectNames()
         let ordered = processes.sorted { $0.1.startedAt > $1.1.startedAt }
         return ordered.map { agent, process in
             let projectPath = process.workingDirectory
-            let name = projectName(for: projectPath)
+            let name = names.name(for: projectPath)
             let isApp = isDesktopApp(process.processName)
             let match = isApp ? nil : sessions
                 .filter { session in
@@ -350,6 +376,42 @@ public enum AgentDiscovery {
         }
     }
 
+    private final class WorkingDirectoryCache: @unchecked Sendable {
+        var entries: [Int32: (startedAt: Date, path: String)] = [:]
+        let lock = NSLock()
+    }
+    private static let workingDirectoryCache = WorkingDirectoryCache()
+
+    /// Working directories by pid. `lsof` is expensive, so each process is asked about once; a pid whose start
+    /// time moved was reused by a different process and is asked again.
+    private static func workingDirectories(for processes: [AgentProcess]) -> [Int32: String] {
+        let cache = workingDirectoryCache
+        var result: [Int32: String] = [:]
+        var missing = Set<Int32>()
+        cache.lock.lock()
+        for process in processes {
+            if let hit = cache.entries[process.pid], abs(hit.startedAt.timeIntervalSince(process.startedAt)) < 5, !hit.path.isEmpty {
+                result[process.pid] = hit.path
+            } else {
+                missing.insert(process.pid)
+            }
+        }
+        cache.lock.unlock()
+        guard !missing.isEmpty else { return result }
+        let fresh = workingDirectories(pids: missing)
+        cache.lock.lock()
+        let live = Set(processes.map(\.pid))
+        cache.entries = cache.entries.filter { live.contains($0.key) }
+        for process in processes where missing.contains(process.pid) {
+            if let path = fresh[process.pid] {
+                cache.entries[process.pid] = (process.startedAt, path)
+                result[process.pid] = path
+            }
+        }
+        cache.lock.unlock()
+        return result
+    }
+
     private static func workingDirectories(pids: Set<Int32>) -> [Int32: String] {
         guard !pids.isEmpty else { return [:] }
         let list = pids.map(String.init).joined(separator: ",")
@@ -433,10 +495,13 @@ public enum AgentDiscovery {
     }
 
     private static func deduplicate(_ events: [AgentUsageEvent]) -> [AgentUsageEvent] {
-        let grouped = Dictionary(grouping: events, by: \.id)
-        return grouped.values.compactMap { $0.max { lhs, rhs in
-            lhs.observedAt < rhs.observedAt
-        } }
+        var latest: [String: AgentUsageEvent] = [:]
+        latest.reserveCapacity(events.count)
+        for event in events {
+            if let existing = latest[event.id], existing.observedAt >= event.observedAt { continue }
+            latest[event.id] = event
+        }
+        return Array(latest.values)
     }
 
     private static func integration(

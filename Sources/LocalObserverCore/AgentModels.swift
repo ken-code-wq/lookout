@@ -73,9 +73,9 @@ public enum AgentKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .copilot: return AgentCapabilities(sessions: true, tokens: true, cost: true, quota: true)
         case .cursor: return AgentCapabilities(sessions: true, tokens: false, cost: true, quota: false)
         case .pi: return AgentCapabilities(sessions: true, tokens: true, cost: true, quota: false)
-        // Qoder zeroes its token fields and bills in subscription credits, which reset per cycle
-        // rather than mapping onto dollars, so only request counts survive locally.
-        case .qoder: return AgentCapabilities(sessions: true, tokens: false, cost: false, quota: false)
+        // Qoder zeroes its token fields, so tokens are estimated from transcript content. It bills in plan
+        // credits that reset per cycle rather than mapping onto dollars, so there is no cost.
+        case .qoder: return AgentCapabilities(sessions: true, tokens: true, cost: false, quota: false, estimatedTokens: true)
         }
     }
 
@@ -111,12 +111,15 @@ public struct AgentCapabilities: Codable, Hashable, Sendable {
     public var tokens: Bool
     public var cost: Bool
     public var quota: Bool
+    /// Tokens are estimated from transcript content because the agent does not record real counts.
+    public var estimatedTokens: Bool
 
-    public init(sessions: Bool, tokens: Bool, cost: Bool, quota: Bool) {
+    public init(sessions: Bool, tokens: Bool, cost: Bool, quota: Bool, estimatedTokens: Bool = false) {
         self.sessions = sessions
         self.tokens = tokens
         self.cost = cost
         self.quota = quota
+        self.estimatedTokens = estimatedTokens
     }
 }
 
@@ -444,7 +447,7 @@ public enum AgentLimitKind: String, Codable, Sendable {
     }
 }
 
-public struct AgentQuotaWindow: Identifiable, Hashable, Sendable {
+public struct AgentQuotaWindow: Identifiable, Hashable, Codable, Sendable {
     public var id: String
     public var agent: AgentKind
     public var label: String
@@ -506,7 +509,7 @@ public enum AgentLimitStatus: String, Codable, Sendable {
     case unsupported
 }
 
-public struct AgentLimitReport: Identifiable, Hashable, Sendable {
+public struct AgentLimitReport: Identifiable, Hashable, Codable, Sendable {
     public var id: AgentKind { agent }
     public var agent: AgentKind
     public var status: AgentLimitStatus
@@ -935,6 +938,15 @@ public struct AgentHeatmapDay: Identifiable, Hashable, Sendable {
         }
     }
 
+    /// Sums days that fall on the same date, e.g. several agents' series into one.
+    public mutating func add(_ other: AgentHeatmapDay) {
+        processed += other.processed
+        cost += other.cost
+        pricedEvents += other.pricedEvents
+        estimatedCostEvents += other.estimatedCostEvents
+        requests += other.requests
+    }
+
     mutating func add(_ event: AgentUsageEvent) {
         processed += event.usage.normalized().processedTokens ?? 0
         if let value = event.cost {
@@ -943,6 +955,48 @@ public struct AgentHeatmapDay: Identifiable, Hashable, Sendable {
             if event.costIsEstimated { estimatedCostEvents += 1 }
         }
         requests += event.requests ?? 1
+    }
+}
+
+/// GitHub-contributions-style summary of a daily series.
+public struct AgentHeatmapStats: Hashable, Sendable {
+    public var total: Double = 0
+    public var activeDays = 0
+    /// Consecutive active days ending today, or yesterday when today hasn't started yet.
+    public var currentStreak = 0
+    public var longestStreak = 0
+    public var busiest: AgentHeatmapDay?
+    public var busiestValue: Double = 0
+
+    public var dailyAverage: Double { activeDays > 0 ? total / Double(activeDays) : 0 }
+
+    public init(days: [AgentHeatmapDay], metric: AgentMetricKind, now: Date = .now, calendar: Calendar = .current) {
+        var active: Set<Date> = []
+        for day in days {
+            guard let value = day.value(for: metric), value > 0 else { continue }
+            total += value
+            active.insert(calendar.startOfDay(for: day.date))
+            if value > busiestValue { busiestValue = value; busiest = day }
+        }
+        activeDays = active.count
+
+        var run = 0
+        for date in active.sorted() {
+            if let previous = calendar.date(byAdding: .day, value: -1, to: date), active.contains(previous) {
+                run += 1
+            } else {
+                run = 1
+            }
+            longestStreak = max(longestStreak, run)
+        }
+
+        var cursor = calendar.startOfDay(for: now)
+        if !active.contains(cursor), let yesterday = calendar.date(byAdding: .day, value: -1, to: cursor) { cursor = yesterday }
+        while active.contains(cursor) {
+            currentStreak += 1
+            guard let previous = calendar.date(byAdding: .day, value: -1, to: cursor) else { break }
+            cursor = previous
+        }
     }
 }
 

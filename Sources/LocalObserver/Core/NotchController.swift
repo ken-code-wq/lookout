@@ -94,6 +94,16 @@ final class NotchController: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.checkSessions() }
             .store(in: &cancellables)
+        // No pointer to watch while the display sleeps or the session is switched away.
+        let workspace = NSWorkspace.shared.notificationCenter
+        Publishers.Merge(workspace.publisher(for: NSWorkspace.screensDidSleepNotification),
+                         workspace.publisher(for: NSWorkspace.sessionDidResignActiveNotification))
+            .sink { [weak self] _ in self?.pausePolling() }
+            .store(in: &cancellables)
+        Publishers.Merge(workspace.publisher(for: NSWorkspace.screensDidWakeNotification),
+                         workspace.publisher(for: NSWorkspace.sessionDidBecomeActiveNotification))
+            .sink { [weak self] _ in self?.resumePolling() }
+            .store(in: &cancellables)
         SystemControls.shared.start()
         SystemControls.shared.externalChange
             .sink { [weak self] kind in self?.showHUD(kind) }
@@ -133,23 +143,63 @@ final class NotchController: ObservableObject {
         panel.setFrame(NSRect(x: spot.rect.midX - size.width / 2, y: spot.screen.frame.maxY - size.height,
                               width: size.width, height: size.height), display: true)
         panel.orderFrontRegardless()
-        if timer == nil { installTimer(fast: false) }
+        if timer == nil && !pollingPaused { installTimer(fast: false) }
+        installMoveMonitors()
     }
 
     /// How often `tick()` samples the pointer: brisk only while it's near the notch or the panel is open,
     /// lazy otherwise — 20Hz around the clock was a constant wake-up on an idle desktop.
     private var pollFast = false
+    private var pollingPaused = false
+    private var moveMonitors: [Any] = []
 
     private func installTimer(fast: Bool) {
         pollFast = fast
         timer?.invalidate()
-        let interval = fast ? 1.0 / 20 : 1.0 / 5
+        let interval = fast ? 1.0 / 20 : 1.0 / 2
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
-        timer.tolerance = interval / 2
+        timer.tolerance = fast ? interval / 2 : 0.5
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
+    }
+
+    private func pausePolling() {
+        pollingPaused = true
+        timer?.invalidate()
+        timer = nil
+    }
+
+    private func resumePolling() {
+        pollingPaused = false
+        guard panel != nil, timer == nil else { return }
+        installTimer(fast: false)
+    }
+
+    /// Pointer motion is what promotes the lazy timer to the brisk one, so the idle rate can stay low
+    /// without making the notch feel slow to react. Nothing fires while the mouse is still.
+    private func installMoveMonitors() {
+        guard moveMonitors.isEmpty else { return }
+        let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged]
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] _ in
+            MainActor.assumeIsolated { self?.pointerMoved() }
+        }) { moveMonitors.append(global) }
+        if let local = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { [weak self] event in
+            MainActor.assumeIsolated { self?.pointerMoved() }
+            return event
+        }) { moveMonitors.append(local) }
+    }
+
+    private func pointerMoved() {
+        guard panel != nil, !pollingPaused, !pollFast, isNearNotch(NSEvent.mouseLocation) else { return }
+        installTimer(fast: true)
+        tick()
+    }
+
+    /// The notch's own footprint plus a margin, rather than the whole top strip of the screen.
+    private func isNearNotch(_ mouse: CGPoint) -> Bool {
+        shapeRect.insetBy(dx: -48, dy: -48).contains(mouse)
     }
 
     private func makePanel() -> NotchPanel {
@@ -184,6 +234,8 @@ final class NotchController: ObservableObject {
     private func teardown() {
         timer?.invalidate()
         timer = nil
+        moveMonitors.forEach(NSEvent.removeMonitor)
+        moveMonitors = []
         panel?.orderOut(nil)
         panel = nil
         mode = .compact
@@ -202,7 +254,7 @@ final class NotchController: ObservableObject {
         let mouse = NSEvent.mouseLocation
         let buttonDown = NSEvent.pressedMouseButtons & 1 != 0
         if !buttonDown { dragBaseline = dragPasteboard.changeCount }
-        let near = mode == .expanded || mouse.y > panel.frame.maxY - 140
+        let near = mode == .expanded || isNearNotch(mouse)
         if near != pollFast { installTimer(fast: near) }
         guard near else { return }
         let now = Date()
@@ -257,7 +309,7 @@ final class NotchController: ObservableObject {
 
     func expand(tab: NotchTab? = nil) {
         guard panel != nil else { return }
-        if !pollFast { installTimer(fast: true) }
+        if !pollFast && !pollingPaused { installTimer(fast: true) }
         isHoveringLimit = false
         if let tab { prefs.notchTab = tab }
         alertTask?.cancel()

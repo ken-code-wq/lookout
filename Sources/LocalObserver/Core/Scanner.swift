@@ -300,18 +300,30 @@ enum PortScanner {
     /// up to 48KB of HTML per port. Healthy probes are reused for this long; failing ones are
     /// retried every scan so recovery stays fast. Entry ids carry the pid, so a restart misses.
     static let probeTTL: TimeInterval = 30
-    private static var probeCache: [String: (at: Date, result: ProbeResult)] = [:]
+    /// Offline listeners back off exponentially (4s, 8s, 16s… capped at `offlineBackoffMax`) instead of
+    /// being re-probed every scan.
+    static let offlineBackoffMax: TimeInterval = 60
+    private struct CachedProbe { var at: Date; var result: ProbeResult; var failures: Int }
+    private static let probeLock = NSLock()
+    private static var probeCache: [String: CachedProbe] = [:]
 
     private static func probeAll(_ entries: [ServerEntry]) async -> [String: ProbeResult] {
         let now = Date()
         var out: [String: ProbeResult] = [:]
         var stale: [ServerEntry] = []
+        probeLock.withLock {
         for e in entries {
-            if let c = probeCache[e.id], c.result.state != .offline, now.timeIntervalSince(c.at) < probeTTL {
-                out[e.id] = c.result
-            } else {
-                stale.append(e)
+            if let c = probeCache[e.id] {
+                let ttl = c.result.state == .offline
+                    ? min(4 * pow(2, Double(max(c.failures - 1, 0))), offlineBackoffMax)
+                    : probeTTL
+                if now.timeIntervalSince(c.at) < ttl {
+                    out[e.id] = c.result
+                    continue
+                }
             }
+            stale.append(e)
+        }
         }
         let fresh = await withTaskGroup(of: (String, ProbeResult).self) { group in
             for e in stale {
@@ -321,15 +333,70 @@ enum PortScanner {
             for await (id, r) in group { res[id] = r }
             return res
         }
-        for (id, r) in fresh { probeCache[id] = (now, r) }
+        probeLock.withLock {
+        for (id, r) in fresh {
+            let failures = r.state == .offline ? (probeCache[id]?.failures ?? 0) + 1 : 0
+            probeCache[id] = CachedProbe(at: now, result: r, failures: failures)
+        }
         let alive = Set(entries.map(\.id))
         probeCache = probeCache.filter { alive.contains($0.key) }
+        }
         out.merge(fresh) { _, new in new }
         return out
     }
 
     /// Drops cached probe results so the next scan re-probes everything (manual Refresh).
-    static func resetProbeCache() { probeCache.removeAll() }
+    static func resetProbeCache() {
+        probeLock.lock()
+        probeCache.removeAll()
+        probeLock.unlock()
+    }
+
+    /// Collects up to `limit` bytes of an HTML response via delegate callbacks (chunked), then cancels.
+    private final class HeadCollector: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+        let limit: Int
+        let start = Date()
+        var response: HTTPURLResponse?
+        var latencyMs = 0
+        var data = Data()
+        var finished = false
+        var cont: CheckedContinuation<(HTTPURLResponse, Data, Int), Error>?
+
+        init(limit: Int) { self.limit = limit }
+
+        private func finish(_ error: Error?) {
+            guard !finished else { return }
+            finished = true
+            if let response { cont?.resume(returning: (response, data, latencyMs)) }
+            else { cont?.resume(throwing: error ?? URLError(.badServerResponse)) }
+            cont = nil
+        }
+
+        func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+                        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+            guard let http = response as? HTTPURLResponse else { completionHandler(.cancel); finish(nil); return }
+            self.response = http
+            latencyMs = Int(Date().timeIntervalSince(start) * 1000)
+            if (http.value(forHTTPHeaderField: "Content-Type") ?? "").contains("html") {
+                completionHandler(.allow)
+            } else {
+                completionHandler(.cancel)
+                finish(nil)
+            }
+        }
+
+        func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive chunk: Data) {
+            data.append(chunk)
+            if data.count >= limit {
+                dataTask.cancel()
+                finish(nil)
+            }
+        }
+
+        func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+            finish(error)
+        }
+    }
 
     private static func probe(_ entry: ServerEntry) async -> ProbeResult {
         if nonHTTPPorts.contains(entry.port) { return ProbeResult(state: .offline) }
@@ -339,19 +406,13 @@ enum PortScanner {
         req.setValue("LocalObserver/1.0", forHTTPHeaderField: "User-Agent")
         let start = Date()
         do {
-            let (bytes, resp) = try await session.bytes(for: req)
-            let ms = Int(Date().timeIntervalSince(start) * 1000)
-            guard let http = resp as? HTTPURLResponse else { return ProbeResult(state: .online, latencyMs: ms) }
-
-            var head = Data()
-            let isHTML = (http.value(forHTTPHeaderField: "Content-Type") ?? "").contains("html")
-            if isHTML {
-                for try await byte in bytes {
-                    head.append(byte)
-                    if head.count >= 48_000 { break }
-                }
+            let collector = HeadCollector(limit: 48_000)
+            let (http, head, ms) = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<(HTTPURLResponse, Data, Int), Error>) in
+                collector.cont = cont
+                let task = session.dataTask(with: req)
+                task.delegate = collector
+                task.resume()
             }
-            bytes.task.cancel()
             let html = String(decoding: head, as: UTF8.self)
             let state: HttpState = (http.statusCode == 401 || http.statusCode == 403) ? .authRequired : .online
             return ProbeResult(state: state, code: http.statusCode, latencyMs: ms,

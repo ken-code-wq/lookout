@@ -80,6 +80,7 @@ void np_stream(void *perl, void *cv) {
         NSString *lastKey = nil;
         NSDictionary *lastSent = nil;
         NSDate *lastBeat = [NSDate distantPast];
+        BOOL idle = YES;
         while (getppid() != 1) { // parent (the app) gone: exit instead of lingering
             @autoreleasepool {
                 NSData *artwork = nil;
@@ -90,15 +91,19 @@ void np_stream(void *perl, void *cv) {
                 [compare removeObjectForKey:@"elapsed"];
                 BOOL changed = trackChanged || ![compare isEqual:lastSent];
                 // Resync position every few seconds even when nothing else changed (seeking, drift).
-                if (changed || -[lastBeat timeIntervalSinceNow] > 4) {
+                // Only while playing: an idle/paused bridge stays silent so the app never wakes for nothing.
+                BOOL playing = [now[@"playing"] boolValue];
+                if (changed || (playing && -[lastBeat timeIntervalSinceNow] > 4)) {
                     if (trackChanged && artwork.length) now[@"artwork"] = [artwork base64EncodedStringWithOptions:0];
                     np_emit(now);
                     lastKey = key;
                     lastSent = compare;
                     lastBeat = [NSDate date];
                 }
+                idle = !now[@"title"] || ![now[@"playing"] boolValue];
             }
-            usleep(700000);
+            // Poll briskly only while something plays; back off when idle or paused.
+            usleep(idle ? 3000000 : 700000);
         }
     }
 }

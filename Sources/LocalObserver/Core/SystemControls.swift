@@ -45,14 +45,34 @@ final class SystemControls: ObservableObject {
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { SystemControls.shared.readBrightness(initial: true) }
         }
-        if brightnessSupported && !brightnessIsSoftware {
-            // No public notification for brightness keys; a cheap poll catches them.
-            let timer = Timer(timeInterval: 0.4, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated { self?.readBrightness(initial: false) }
-            }
-            RunLoop.main.add(timer, forMode: .common)
-            brightnessTimer = timer
+        startBrightnessPolling()
+        // Nothing to poll while the displays are asleep.
+        let workspace = NSWorkspace.shared.notificationCenter
+        workspace.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { SystemControls.shared.stopBrightnessPolling() }
         }
+        workspace.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                SystemControls.shared.readBrightness(initial: true)
+                SystemControls.shared.startBrightnessPolling()
+            }
+        }
+    }
+
+    private func startBrightnessPolling() {
+        guard brightnessTimer == nil, brightnessSupported && !brightnessIsSoftware else { return }
+        // No public notification for brightness keys; a cheap, coalescable poll catches them.
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.readBrightness(initial: false) }
+        }
+        timer.tolerance = 0.3
+        RunLoop.main.add(timer, forMode: .common)
+        brightnessTimer = timer
+    }
+
+    private func stopBrightnessPolling() {
+        brightnessTimer?.invalidate()
+        brightnessTimer = nil
     }
 
     // MARK: Volume
@@ -97,11 +117,11 @@ final class SystemControls: ObservableObject {
         var value = Float32(0)
         var size = UInt32(MemoryLayout<Float32>.size)
         var address = Self.volumeAddress
-        if AudioObjectGetPropertyData(device, &address, 0, nil, &size, &value) == noErr { volume = Double(value) }
+        if AudioObjectGetPropertyData(device, &address, 0, nil, &size, &value) == noErr, volume != Double(value) { volume = Double(value) }
         var mute = UInt32(0)
         size = UInt32(MemoryLayout<UInt32>.size)
         var muteAddress = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyMute, mScope: kAudioDevicePropertyScopeOutput, mElement: kAudioObjectPropertyElementMain)
-        if AudioObjectGetPropertyData(device, &muteAddress, 0, nil, &size, &mute) == noErr { isMuted = mute != 0 }
+        if AudioObjectGetPropertyData(device, &muteAddress, 0, nil, &size, &mute) == noErr, isMuted != (mute != 0) { isMuted = mute != 0 }
     }
 
     func setVolume(_ value: Double) {
@@ -148,25 +168,30 @@ final class SystemControls: ObservableObject {
     private func readBrightness(initial: Bool) {
         guard let get = Self.getBrightness, let display = builtInDisplay else {
             // No built-in panel in use: fall back to dimming the external displays.
-            brightnessIsSoftware = !externalDisplays.isEmpty
-            brightnessSupported = brightnessIsSoftware
-            if brightnessIsSoftware {
-                brightness = Preferences.shared.externalBrightness
+            let software = !externalDisplays.isEmpty
+            if brightnessIsSoftware != software { brightnessIsSoftware = software }
+            if brightnessSupported != software { brightnessSupported = software }
+            if software {
+                let saved = Preferences.shared.externalBrightness
+                if brightness != saved { brightness = saved }
                 if initial { applySoftwareBrightness() }
+                stopBrightnessPolling()
             }
             return
         }
-        brightnessIsSoftware = false
+        if brightnessIsSoftware { brightnessIsSoftware = false }
         var value: Float = 0
-        guard get(display, &value) == 0 else { brightnessSupported = false; return }
-        brightnessSupported = true
+        guard get(display, &value) == 0 else { if brightnessSupported { brightnessSupported = false }; return }
+        if !brightnessSupported { brightnessSupported = true }
         let new = Double(value)
         if !initial, abs(new - brightness) > 0.004, Date().timeIntervalSince(lastSetByUs) > 0.6 {
             brightness = new
             externalChange.send(.brightness)
-        } else {
+        } else if new != brightness {
             brightness = new
         }
+        // Display topology may have just changed (initial reads): make sure the poll matches it.
+        if initial { startBrightnessPolling() }
     }
 
     func setBrightness(_ value: Double) {
@@ -211,6 +236,13 @@ final class KeepAwake: ObservableObject {
     @Published private(set) var isHolding = false
     private var assertion: IOPMAssertionID = 0
     private var cancellables: Set<AnyCancellable> = []
+    /// A "while working" hold ends after this long even if a session still looks busy.
+    private static let maxWorkingHold: TimeInterval = 2 * 3600
+    /// A session only counts as working if it showed activity this recently (unpaired `.running` processes don't).
+    private static let activityWindow: TimeInterval = 5 * 60
+    private var holdStartedAt: Date?
+    private var holdExpiry: Task<Void, Never>?
+    private var expiredWhileWorking = false
 
     func attach(to store: AgentStore) {
         guard cancellables.isEmpty else { return }
@@ -218,10 +250,37 @@ final class KeepAwake: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self, weak store] mode, _ in
                 guard let self, let store else { return }
-                let working = store.runningSessions.contains { AgentActivityBucket($0) == .working }
-                self.hold(mode == .always || (mode == .whileWorking && working))
+                let cutoff = Date().addingTimeInterval(-Self.activityWindow)
+                let working = store.runningSessions.contains {
+                    AgentActivityBucket($0) == .working && $0.updatedAt > cutoff
+                }
+                if !working { self.expiredWhileWorking = false }
+                let wantsWorkingHold = mode == .whileWorking && working && !self.expiredWhileWorking
+                self.hold(mode == .always || wantsWorkingHold)
+                if mode == .whileWorking, self.isHolding { self.armExpiry() } else { self.disarmExpiry() }
             }
             .store(in: &cancellables)
+    }
+
+    /// Safety net: releases a "while working" hold after `maxWorkingHold`, until work stops and restarts.
+    private func armExpiry() {
+        guard holdExpiry == nil else { return }
+        let started = holdStartedAt ?? Date()
+        holdStartedAt = started
+        let remaining = max(0, Self.maxWorkingHold - Date().timeIntervalSince(started))
+        holdExpiry = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(remaining))
+            guard !Task.isCancelled, let self else { return }
+            self.expiredWhileWorking = true
+            self.holdExpiry = nil
+            self.hold(false)
+        }
+    }
+
+    private func disarmExpiry() {
+        holdExpiry?.cancel()
+        holdExpiry = nil
+        if !isHolding { holdStartedAt = nil }
     }
 
     private func hold(_ on: Bool) {
@@ -233,6 +292,7 @@ final class KeepAwake: ObservableObject {
         } else {
             IOPMAssertionRelease(assertion)
             isHolding = false
+            holdStartedAt = nil
         }
     }
 }

@@ -7,11 +7,19 @@ import LocalObserverCore
 struct UsageHeatmapView: View {
     var days: [AgentHeatmapDay]
     var metric: AgentMetricKind
+    /// Shade colour; the dashboard tints the grid with the agent it's showing.
+    var tint: Color = N.blue
+    /// The dashboard lets cells grow to fill a wide card; the Usage page keeps them GitHub-small.
+    var maxCell: CGFloat = 12
+    /// When set, clicking a day selects it (clicking it again clears).
+    var selection: Binding<Date?>? = nil
+    /// Hide the summary line and legend when the caller shows its own.
+    var showsFooter = true
 
     private static let gap: CGFloat = 3
     private static let labelWidth: CGFloat = 26
     private static let monthHeight: CGFloat = 15
-    private static let maxCell: CGFloat = 12
+    private static let levels: [Double] = [0, 0.25, 0.45, 0.68, 0.92]
 
     @State private var width: CGFloat = 700
 
@@ -59,12 +67,14 @@ struct UsageHeatmapView: View {
                         .offset(x: Self.labelWidth + Self.gap + CGFloat(label.column) * (cell + Self.gap))
                 }
             }
-            HStack(spacing: 5) {
-                Text(summary(activeDays: positives.count, total: total))
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(N.text3)
-                Spacer(minLength: 8)
-                legend(cell: min(cell, 10))
+            if showsFooter {
+                HStack(spacing: 5) {
+                    Text(summary(activeDays: positives.count, total: total))
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(N.text3)
+                    Spacer(minLength: 8)
+                    UsageHeatmapLegend(tint: tint, cell: min(cell, 10))
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -77,7 +87,7 @@ struct UsageHeatmapView: View {
     private func cellSize(_ columns: Int) -> CGFloat {
         let cols = CGFloat(max(columns, 1))
         let raw = (width - Self.labelWidth - Self.gap * cols) / cols
-        return min(max(raw, 4), Self.maxCell)
+        return min(max(raw, 4), maxCell)
     }
 
     private func summary(activeDays: Int, total: Double) -> String {
@@ -87,32 +97,19 @@ struct UsageHeatmapView: View {
 
     // MARK: Cells
 
-    @ViewBuilder
     private func cellView(date: Date?, day: AgentHeatmapDay?, cell: CGFloat, shade: (Double) -> Int) -> some View {
-        if let date {
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                .fill(color(day: day, shade: shade))
-                .frame(width: cell, height: cell)
-                .overlay {
-                    if day == nil {
-                        RoundedRectangle(cornerRadius: 2, style: .continuous).strokeBorder(N.divider)
-                    }
-                }
-                .help(tooltip(date, day))
-        } else {
-            Color.clear.frame(width: cell, height: cell)
+        HeatmapCell(date: date, day: day, cell: cell, fill: color(day: day, shade: shade),
+                    selected: date != nil && selection?.wrappedValue == date) {
+            guard let selection, let date else { return }
+            selection.wrappedValue = selection.wrappedValue == date ? nil : date
         }
+        .equatable()
     }
 
     private func color(day: AgentHeatmapDay?, shade: (Double) -> Int) -> Color {
         guard let day, let value = day.value(for: metric) else { return N.bgSoft }
-        switch shade(value) {
-        case 1: return N.blue.opacity(0.22)
-        case 2: return N.blue.opacity(0.42)
-        case 3: return N.blue.opacity(0.64)
-        case 4: return N.blue.opacity(0.86)
-        default: return N.bgSoft
-        }
+        let level = shade(value)
+        return level == 0 ? N.bgSoft : tint.opacity(Self.levels[level])
     }
 
     /// Quartile shading over the active days of the chosen metric.
@@ -130,16 +127,6 @@ struct UsageHeatmapView: View {
         }
     }
 
-    private func tooltip(_ date: Date, _ day: AgentHeatmapDay?) -> String {
-        let title = date.formatted(.dateTime.weekday(.wide).month(.wide).day().year())
-        guard let day else { return "\(title) — no usage" }
-        var parts: [String] = []
-        if day.processed > 0 { parts.append("\(AgentFormat.compact(Double(day.processed))) tokens") }
-        if day.hasCost { parts.append(AgentFormat.cost(day.cost, estimated: day.costIsEstimated)) }
-        if day.requests > 0 { parts.append("\(day.requests) request\(day.requests == 1 ? "" : "s")") }
-        return parts.isEmpty ? "\(title) — no usage" : "\(title) — \(parts.joined(separator: " · "))"
-    }
-
     // MARK: Chrome
 
     private func weekdayColumn(cell: CGFloat) -> some View {
@@ -150,18 +137,6 @@ struct UsageHeatmapView: View {
                     .foregroundStyle(N.text3)
                     .frame(width: Self.labelWidth, height: cell, alignment: .trailing)
             }
-        }
-    }
-
-    private func legend(cell: CGFloat) -> some View {
-        HStack(spacing: 3) {
-            Text("Less").font(.system(size: 10)).foregroundStyle(N.text3)
-            ForEach(0..<5, id: \.self) { level in
-                RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .fill(level == 0 ? AnyShapeStyle(N.bgSoft) : AnyShapeStyle(N.blue.opacity([0.0001, 0.22, 0.42, 0.64, 0.86][level])))
-                    .frame(width: cell, height: cell)
-            }
-            Text("More").font(.system(size: 10)).foregroundStyle(N.text3)
         }
     }
 
@@ -201,5 +176,76 @@ struct UsageHeatmapView: View {
             }
         }
         return labels
+    }
+}
+
+/// One day's square. Owns its hover state and builds its tooltip only when drawn, so pointing at a cell
+/// re-renders that cell alone rather than the whole 371-cell grid.
+private struct HeatmapCell: View, Equatable {
+    var date: Date?
+    var day: AgentHeatmapDay?
+    var cell: CGFloat
+    var fill: Color
+    var selected: Bool
+    var tap: () -> Void
+    @State private var hovered = false
+
+    static func == (lhs: HeatmapCell, rhs: HeatmapCell) -> Bool {
+        lhs.date == rhs.date && lhs.day == rhs.day && lhs.cell == rhs.cell && lhs.fill == rhs.fill && lhs.selected == rhs.selected
+    }
+
+    var body: some View {
+        if let date {
+            let radius = max(2, cell / 5)
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .fill(fill)
+                .frame(width: cell, height: cell)
+                .overlay {
+                    if selected || hovered {
+                        RoundedRectangle(cornerRadius: radius, style: .continuous)
+                            .strokeBorder(selected ? N.text : N.text2, lineWidth: selected ? 1.5 : 1)
+                    } else if day == nil {
+                        RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(N.divider)
+                    }
+                }
+                .contentShape(Rectangle())
+                .onHover { hovered = $0 }
+                .onTapGesture(perform: tap)
+                .help(hovered ? tooltip(date, day) : "")
+        } else {
+            Color.clear.frame(width: cell, height: cell)
+        }
+    }
+
+    private func tooltip(_ date: Date, _ day: AgentHeatmapDay?) -> String {
+        let title = date.formatted(.dateTime.weekday(.wide).month(.wide).day().year())
+        guard let day else { return "\(title) — no usage" }
+        var parts: [String] = []
+        if day.processed > 0 { parts.append("\(AgentFormat.compact(Double(day.processed))) tokens") }
+        if day.hasCost { parts.append(AgentFormat.cost(day.cost, estimated: day.costIsEstimated)) }
+        if day.requests > 0 { parts.append("\(day.requests) request\(day.requests == 1 ? "" : "s")") }
+        return parts.isEmpty ? "\(title) — no usage" : "\(title) — \(parts.joined(separator: " · "))"
+    }
+
+}
+
+/// "Less ▢▢▢▢▢ More", matching the grid's shading.
+struct UsageHeatmapLegend: View {
+    var tint: Color
+    var cell: CGFloat = 10
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Text("Less").font(.system(size: 10)).foregroundStyle(N.text3)
+            ForEach(0..<5, id: \.self) { level in
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(level == 0 ? AnyShapeStyle(N.bgSoft) : AnyShapeStyle(tint.opacity([0, 0.25, 0.45, 0.68, 0.92][level])))
+                    .overlay {
+                        if level == 0 { RoundedRectangle(cornerRadius: 2, style: .continuous).strokeBorder(N.divider) }
+                    }
+                    .frame(width: cell, height: cell)
+            }
+            Text("More").font(.system(size: 10)).foregroundStyle(N.text3)
+        }
     }
 }

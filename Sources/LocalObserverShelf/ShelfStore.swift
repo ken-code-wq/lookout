@@ -387,11 +387,11 @@ struct ShelfArchive: Codable {
     }
 }
 
-/// macOS posts nothing when the clipboard changes, so this reads its change counter a couple of times a second.
+/// macOS posts nothing when the clipboard changes, so this reads its change counter about once a second.
 /// That's one integer read; the timer's tolerance lets the system batch it with other wake-ups.
 @MainActor
 final class ClipboardMonitor {
-    private static let interval: TimeInterval = 0.4
+    private static let interval: TimeInterval = 1.0
     private let pasteboard: NSPasteboard
     private var timer: Timer?
     private var lastCount: Int
@@ -410,7 +410,7 @@ final class ClipboardMonitor {
         let timer = Timer(timeInterval: Self.interval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.poll() }
         }
-        timer.tolerance = 0.2
+        timer.tolerance = 0.5
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
     }

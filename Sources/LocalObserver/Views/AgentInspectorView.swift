@@ -87,6 +87,12 @@ struct AgentInspectorView: View {
                                 Text(AgentFormat.cost(session.cost))
                                     .help(session.costIsEstimated ? "Estimated from public API prices" : "Reported by the agent")
                             }
+                            if session.agent.capabilities.estimatedTokens {
+                                Text("\(session.agent.name) does not record token counts, so these are estimated from the transcript.")
+                                    .font(NFont.caption)
+                                    .foregroundStyle(N.text2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                     }
                     if !session.sourcePath.isEmpty {
