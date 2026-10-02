@@ -179,7 +179,22 @@ final class AppAudio: ObservableObject {
 
     // MARK: Discovery
 
+    #if DEBUG
+    private var isDemo = false
+    /// Debug/demo (snapshot harness): shows these apps and outputs instead of this Mac's; never refreshes again.
+    func loadDemo(apps demoApps: [AudioApp], outputs demoOutputs: [OutputDevice], systemOutputUID system: String?) {
+        isDemo = true
+        apps = demoApps
+        outputs = demoOutputs
+        systemOutputUID = system
+        settings = [:]
+    }
+    #else
+    private let isDemo = false
+    #endif
+
     func refresh() {
+        guard !isDemo else { return }
         let previousSystem = systemOutputUID
         let foundOutputs = Self.readOutputs()
         if foundOutputs != outputs { outputs = foundOutputs }

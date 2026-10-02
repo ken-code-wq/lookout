@@ -47,6 +47,8 @@ public final class AgentStore: ObservableObject {
     private var usageBuiltAt = Date.distantPast
     private var usageGeneration = 0
     private var glanceGeneration = 0
+    private var appliedUsageGeneration = 0
+    private var appliedGlanceGeneration = 0
     private var searchRebuildTask: Task<Void, Never>?
     /// Signature of the last scan's usage events, so an unchanged scan skips the merge entirely.
     private var lastFreshSignature: Int?
@@ -58,6 +60,10 @@ public final class AgentStore: ObservableObject {
     private var ledgerWriteTask: Task<Void, Never>?
     private var lastLedgerWrite = Date()
     private static let ledgerWriteInterval: TimeInterval = 300
+    /// False for stores that must never touch the on-disk ledger (snapshot demo data).
+    private let persistsLedger: Bool
+    /// Set by `loadDemo`: the store shows injected data and never scans, fetches, or writes.
+    private var isDemo = false
 
     private enum Keys {
         static let settings = "LocalObserver.agentSettings"
@@ -74,9 +80,11 @@ public final class AgentStore: ObservableObject {
     /// Bumped whenever event ids or token semantics change, so stale (e.g. double-counted) history is discarded.
     nonisolated private static let ledgerVersion = 2
 
-    public init(defaults: UserDefaults = .standard, fileManager: FileManager = .default, autoStart: Bool = true) {
+    public init(defaults: UserDefaults = .standard, fileManager: FileManager = .default, autoStart: Bool = true,
+                persistsLedger: Bool = true) {
         self.defaults = defaults
         self.fileManager = fileManager
+        self.persistsLedger = persistsLedger
         if let data = defaults.data(forKey: Keys.settings),
            let stored = try? JSONDecoder().decode(AgentSettings.self, from: data) {
             settings = stored
@@ -86,7 +94,7 @@ public final class AgentStore: ObservableObject {
         glanceRange = AgentGlanceRange(rawValue: defaults.string(forKey: Keys.glanceRange) ?? "") ?? .last24h
         glanceMetric = AgentMetricKind(rawValue: defaults.string(forKey: Keys.glanceMetric) ?? "") ?? .tokens
         glanceAgents = Set((defaults.stringArray(forKey: Keys.glanceAgents) ?? []).compactMap(AgentKind.init(rawValue:)))
-        ledgerEvents = Self.loadLedger(fileManager: fileManager)
+        ledgerEvents = persistsLedger ? Self.loadLedger(fileManager: fileManager) : []
         ledgerSignature = Self.signature(ledgerEvents)
         applyUsage(Self.computeUsage(
             events: ledgerEvents, filter: filter, enabledAgents: settings.enabledAgents,
@@ -116,6 +124,7 @@ public final class AgentStore: ObservableObject {
     // MARK: - Refresh
 
     public func refresh(quiet: Bool = false, forceLimits: Bool = false) {
+        guard !isDemo else { return }
         refreshLimits(force: forceLimits || !quiet)
         guard refreshTask == nil else { return }
         if !quiet && !isScanning { isScanning = true }
@@ -169,6 +178,28 @@ public final class AgentStore: ObservableObject {
         }
     }
 
+    /// Debug/demo: shows the given data instead of this Mac's. Only for stores made with `autoStart: false,
+    /// persistsLedger: false`; afterwards the store never scans, fetches limits, or writes. Usage reports rebuild
+    /// off the main actor; wait for `isUsageReady` before rendering.
+    public func loadDemo(snapshot: AgentSnapshot, ledger: [AgentUsageEvent], limits: [AgentLimitReport]) {
+        precondition(!persistsLedger, "loadDemo needs a store that never persists its ledger")
+        isDemo = true
+        timer?.invalidate()
+        timer = nil
+        refreshTask?.cancel()
+        limitsTask?.cancel()
+        self.snapshot = snapshot
+        ledgerEvents = ledger
+        ledgerSignature = Self.signature(ledger)
+        ledgerRevision += 1
+        accountReports = Dictionary(limits.map { ($0.agent, $0) }, uniquingKeysWith: { _, latest in latest })
+        lastRefresh = snapshot.discoveredAt
+        rebuildUsage()
+    }
+
+    /// True once no usage rebuild is in flight (both the main and glance reports reflect the current ledger).
+    public var isUsageReady: Bool { appliedUsageGeneration == usageGeneration && appliedGlanceGeneration == glanceGeneration }
+
     /// Snapshots compare equal when everything but the scan timestamp matches.
     private static func sameContent(_ lhs: AgentSnapshot, _ rhs: AgentSnapshot) -> Bool {
         lhs.processes == rhs.processes && lhs.sessions == rhs.sessions && lhs.limitReports == rhs.limitReports
@@ -177,6 +208,7 @@ public final class AgentStore: ObservableObject {
 
     /// Account limits run on their own task: some providers take seconds to answer and must never hold up the process list.
     public func refreshLimits(force: Bool = false) {
+        guard !isDemo else { return }
         guard limitsTask == nil else { return }
         let enabled = settings.enabledAgents
         let accounts = settings.accountLimitAgents.intersection(enabled)
@@ -337,6 +369,8 @@ public final class AgentStore: ObservableObject {
                     usage: self.usageGeneration == generation,
                     glance: self.glanceGeneration == glanceGen
                 )
+                if self.usageGeneration == generation { self.appliedUsageGeneration = generation }
+                if self.glanceGeneration == glanceGen { self.appliedGlanceGeneration = glanceGen }
             }
         }
     }
@@ -455,6 +489,7 @@ public final class AgentStore: ObservableObject {
             await MainActor.run {
                 guard let self, self.glanceGeneration == generation else { return }
                 self.glanceUsage = report
+                self.appliedGlanceGeneration = generation
             }
         }
     }
@@ -636,6 +671,7 @@ public final class AgentStore: ObservableObject {
 
     /// Queues the ledger for writing. At most one write per `ledgerWriteInterval`; `flush()` writes immediately.
     private func persistLedger(_ events: [AgentUsageEvent]) {
+        guard persistsLedger else { return }
         pendingLedger = events
         guard ledgerWriteTask == nil else { return }
         let wait = max(0, Self.ledgerWriteInterval - Date().timeIntervalSince(lastLedgerWrite))
@@ -673,6 +709,7 @@ public final class AgentStore: ObservableObject {
 
     /// Writes any pending ledger now, synchronously. Call when the app is about to quit.
     public func flush() {
+        guard persistsLedger else { return }
         ledgerWriteTask?.cancel()
         ledgerWriteTask = nil
         guard let events = pendingLedger else { return }

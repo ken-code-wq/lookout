@@ -1,61 +1,121 @@
-# Local Observer
+<p align="center">
+  <img src="docs/assets/logo.png" width="128" alt="Lookout logo">
+</p>
 
-Native macOS menu-bar + dashboard app to see every local server running on your Mac, where it lives, and stop / start it.
+<h1 align="center">Lookout</h1>
 
-UI follows the light minimal dashboard reference: white cards on `#F2F2F5`, small uppercase headers, purple accent, dotted/strip charts, gauge, dense data table.
+<p align="center">
+  A native macOS command center for your coding agents and local dev servers.<br>
+  See what every agent is doing, what it costs, how close you are to your plan limits, and what's listening on your ports, all from the notch.
+</p>
+
+<p align="center">
+  <a href="https://github.com/ken-code-wq/lookout/releases/latest"><b>Download</b></a> ·
+  <a href="#features">Features</a> ·
+  <a href="#build-from-source">Build from source</a> ·
+  <a href="#privacy">Privacy</a>
+</p>
+
+<p align="center">
+  <img src="docs/assets/screenshots/home-dark.png" width="820" alt="Lookout dashboard">
+</p>
+
+## Why
+
+If you run Claude Code, Codex, Cursor and friends side by side, you end up alt-tabbing between terminals to see which agent is waiting on you, guessing how much of your 5-hour window is left, and running `lsof` to find what's on port 3000. Lookout watches all of it locally and puts the answer one glance away.
 
 ## Features
 
-- **Live scan** of listening TCP ports via `lsof` (no sudo needed for your own processes)
-- **Enrichment**: PID → `ps` command, cwd via `lsof -p`, project guess (`package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, `Dockerfile`…), HTTP probe (status code, latency, `<title>`)
-- **Dashboard**: Active servers, port mix, response health, ports/latency map, service-type breakdown + online gauge
-- **Table**: search, type filter, favorites-only, show-system toggle, double-click to open, copy URL, reveal in Finder, stop (SIGTERM) + force (SIGKILL)
-- **Start new**: `New server` sheet with **drag & drop a folder** → auto-suggests `npm run dev` / `python -m http.server` etc., runs detached, saved across restarts
-- **Menu bar extra** (the battery-percentage bar): `⌁ N` icon with count, top servers, Open / Stop, refresh
+**Coding agents**
+- Live sessions across **Claude Code, Codex, OpenCode, Antigravity, GitHub Copilot, Cursor, Pi and Qoder**, with state: *Working*, *Needs you*, *Your turn*, *Idle*
+- Notifications when an agent needs approval or finishes its turn, and a jump straight to its terminal or editor
+- Token usage, request counts and estimated API cost per agent, model and project
+- A GitHub-style 12-month activity heatmap, streaks and daily breakdowns
+- Plan limits (5-hour sessions, weekly windows, premium requests) with reset times and pace
 
-## Run
+**Local servers**
+- Every listening TCP port with its process, project and working directory
+- HTTP health probes with status, latency and page title
+- Start, stop and relaunch dev servers; saved launchers survive restarts
+
+**Everywhere on your Mac**
+- **Notch**: agents, usage, limits, servers, now playing, per-app sound, a shelf for files and clipboard history, a focus timer and keep-awake
+- **Peek**: a small floating panel that follows you across Spaces
+- **Menu bar** panel and **desktop widgets**
+
+## Screenshots
+
+<table>
+  <tr>
+    <td><img src="docs/assets/screenshots/notch-expanded.png" alt="Notch: running agents"></td>
+    <td><img src="docs/assets/screenshots/notch-limits.png" alt="Notch: plan limits"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/assets/screenshots/usage-light.png" alt="Usage"></td>
+    <td><img src="docs/assets/screenshots/limits-light.png" alt="Plan limits"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/assets/screenshots/activity-light.png" alt="Agent sessions"></td>
+    <td><img src="docs/assets/screenshots/notch-servers.png" alt="Notch: local servers"></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/assets/screenshots/peek-large-dark.png" width="300" alt="Peek panel"></td>
+    <td align="center"><img src="docs/assets/screenshots/menubar-light.png" width="300" alt="Menu bar panel"></td>
+  </tr>
+</table>
+
+<sub>Screenshots use generated demo data.</sub>
+
+## Install
+
+1. Download `Lookout.zip` from the [latest release](https://github.com/ken-code-wq/lookout/releases/latest) and unzip it.
+2. Move `Lookout.app` to `/Applications`.
+3. The build is not notarized by Apple, so macOS will block the first launch. Clear the quarantine flag once:
+
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/Lookout.app
+   ```
+
+   or right-click the app › **Open** › **Open**.
+
+Requires macOS 14.2 or later on Apple Silicon.
+
+Desktop widgets need a build signed with a real certificate, so they won't appear in the prebuilt release. Build from source to use them.
+
+## Build from source
+
+Only the Xcode Command Line Tools are needed.
 
 ```bash
-swift run
+git clone https://github.com/ken-code-wq/lookout.git
+cd lookout
+swift run LocalObserver            # run a debug build
+./packaging/build-app.sh           # build Lookout.app (release)
+swift run LocalObserverVerification  # parsing and core checks
 ```
 
-Needs only Command Line Tools (no full Xcode). macOS 14+.
+For widgets and stable privacy permissions across rebuilds, create a local signing identity first with `packaging/make-signing-cert.sh`.
 
-## How detection works
+Regenerate the README screenshots from demo data:
 
-1. `lsof -iTCP -sTCP:LISTEN -P -n -F pcn` → pid / process / `host:port`
-2. `ps -o pid=,args=` → full command
-3. `lsof -p <pid> -Fn` → `fcwd` → working directory
-4. Walk up ≤5 dirs for project markers → name + type
-5. `URLSession` GET `http://127.0.0.1:port` (1.5s timeout) → online / status / ms / title
-
-Refreshes every 4s (toggleable). Stopping sends SIGTERM, then suggests Force (SIGKILL) if still alive.
-
-## Project layout
-
-```
-Package.swift
-Sources/LocalObserver/
-  LocalObserverApp.swift   # WindowGroup + MenuBarExtra
-  Core/
-    Models.swift           # ServerEntry, ProjectType
-    Scanner.swift          # lsof/ps/cwd/project/HTTP probe
-    ProcessManager.swift   # kill / launch / open / reveal
-    AppState.swift         # store, filter, favorites, managed (UserDefaults)
-  Views/
-    Theme.swift            # colors, .card(), pills, dots
-    Charts.swift           # Sparkline, MiniBars, DottedStrip, Gauge
-    StatCards.swift        # top + middle rows
-    ServerTable.swift      # main table + actions
-    ContentView.swift      # sidebar + header + layout
-    AddServerSheet.swift   # new server + folder drop
-    MenuBarView.swift      # menu bar dropdown
+```bash
+LOCAL_OBSERVER_SNAPSHOT_DEMO=1 LOCAL_OBSERVER_SNAPSHOT_DIR=/tmp/shots .build/debug/LocalObserver
 ```
 
-## Next ideas
+## How it works
 
-- Per-process CPU/RSS in table (via `ps -o %cpu,rss`)
-- Request log / traffic sparkline per port
-- `sudo` helper for root-owned listeners
-- Launch-at-login + global hotkey
-- Export table as CSV
+- **Agents**: Lookout reads the session transcripts each agent already writes locally (for example `~/.claude/projects`, `~/.codex`) incrementally, and matches them to running processes from `ps`.
+- **Servers**: `lsof -iTCP -sTCP:LISTEN` for ports, `ps` and the process cwd for the project, then a short HTTP probe on `127.0.0.1`.
+- **Usage history** is kept in a local ledger under `~/Library/Application Support/LocalObserver/`.
+
+## Privacy
+
+Everything runs on your Mac. There are no analytics, accounts or servers of ours.
+
+The only network requests are the optional plan-limit checks, which call each provider's own usage endpoint (Anthropic, OpenAI, GitHub, Cursor) with credentials already on your machine. They're off until you enable them per agent in Settings.
+
+Costs are estimates based on public API prices; subscription plans bill differently.
+
+## License
+
+[MIT](LICENSE)

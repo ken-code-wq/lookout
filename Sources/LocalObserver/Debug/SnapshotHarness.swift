@@ -16,6 +16,13 @@ enum SnapshotHarness {
 
     private static var windows: [NSWindow] = []
 
+    /// A server list for a render: this Mac's, or the fake one in demo mode.
+    private static func makeState() -> AppState {
+        let state = AppState()
+        if SnapshotDemo.isEnabled { SnapshotDemo.loadServers(into: state) }
+        return state
+    }
+
     /// `LOCAL_OBSERVER_SNAPSHOT_ONLY=peek` renders just the shots whose names start with it.
     private static func wanted(_ name: String) -> Bool {
         guard let only = ProcessInfo.processInfo.environment["LOCAL_OBSERVER_SNAPSHOT_ONLY"], !only.isEmpty else { return true }
@@ -77,14 +84,26 @@ enum SnapshotHarness {
         settings.hasCompletedSetup = !firstRun
         settings.accountLimitAgents = firstRun ? [] : Set(AgentKind.allCases.filter(AgentLimitClients.supportsAccountLimits))
         defaults.set(try? JSONEncoder().encode(settings), forKey: "LocalObserver.agentSettings")
-        let store = AgentStore(defaults: defaults)
+        let demo = SnapshotDemo.isEnabled
+        // Demo stores never read or write the real usage ledger, and never scan.
+        let store = demo ? AgentStore(defaults: defaults, autoStart: false, persistsLedger: false) : AgentStore(defaults: defaults)
         let width = Double(ProcessInfo.processInfo.environment["LOCAL_OBSERVER_SNAPSHOT_WIDTH"] ?? "") ?? 1180
 
-        AppAudio.shared.refresh()
+        if demo {
+            SnapshotDemo.loadAgents(into: store)
+            SnapshotDemo.loadAudio()
+        } else {
+            AppAudio.shared.refresh()
+        }
         Task { @MainActor in
-            // Wait for the process scan and the (slower) account limits.
-            for _ in 0..<240 where store.lastRefresh == nil || store.isScanning || store.accountReports.isEmpty {
-                try? await Task.sleep(for: .milliseconds(250))
+            if demo {
+                // Usage reports are built off the main actor; wait until they've landed.
+                for _ in 0..<240 where !store.isUsageReady { try? await Task.sleep(for: .milliseconds(100)) }
+            } else {
+                // Wait for the process scan and the (slower) account limits.
+                for _ in 0..<240 where store.lastRefresh == nil || store.isScanning || store.accountReports.isEmpty {
+                    try? await Task.sleep(for: .milliseconds(250))
+                }
             }
             try? await Task.sleep(for: .seconds(1))
             if let first = store.runningSessions.first { store.selectedSessionID = first.id }
@@ -95,15 +114,16 @@ enum SnapshotHarness {
                 ("limits", AnyView(AgentLimitsPage(store: store)), CGSize(width: width, height: 1100)),
                 ("inspector", AnyView(inspector(store)), CGSize(width: 360, height: 900)),
                 ("settings", AnyView(AgentSettingsView(store: store)), CGSize(width: 620, height: 560)),
-                ("menubar", AnyView(MenuBarView(state: AppState(), agentStore: store)), CGSize(width: 360, height: 1300)),
+                ("menubar", AnyView(MenuBarView(state: makeState(), agentStore: store)), CGSize(width: 360, height: 1300)),
             ]
             // Notch states, each as its own controller so modes don't bleed between renders.
             let sample = store.runningSessions.first
             let notchStates: [(String, NotchController.Mode, NotchAlert?)] = [
                 ("notch-compact", .compact, nil),
                 ("notch-alert", .alert, NotchAlert(id: "x", kind: .needsYou, agent: sample?.agent ?? .claude,
-                                                   title: sample?.projectName ?? "local-observer",
-                                                   detail: "Claude is waiting for you: Custom filters for filtering",
+                                                   title: sample?.projectName ?? (demo ? "aurora-api" : "local-observer"),
+                                                   detail: demo ? "Claude is waiting for you: Add rate limiting to /search"
+                                                                : "Claude is waiting for you: Custom filters for filtering",
                                                    badge: "Needs approval", sessionID: nil)),
                 ("notch-alert-reset", .alert, NotchAlert(id: "r", kind: .reset, agent: .claude, title: "Claude 5-hour session is back",
                                                          detail: "Limit reset. Agents can run again.", badge: "Back", sessionID: nil)),
@@ -131,7 +151,7 @@ enum SnapshotHarness {
                 Preferences.shared.limitProviders = providerSets[name] ?? (name.hasSuffix("-multi") ? [.claude, .codex, .copilot] : [])
                 let controller = NotchController()
                 controller.debugShow(mode, alert: alert, limitHover: name.hasPrefix("notch-hover"))
-                let view = AnyView(NotchRootView(controller: controller, state: AppState(), agentStore: store)
+                let view = AnyView(NotchRootView(controller: controller, state: makeState(), agentStore: store)
                     .background(LinearGradient(colors: [Color(red: 0.2, green: 0.16, blue: 0.3), Color(red: 0.35, green: 0.18, blue: 0.3)],
                                                startPoint: .top, endPoint: .bottom)))
                 let url = directory.appendingPathComponent("\(name).png")
@@ -146,7 +166,7 @@ enum SnapshotHarness {
             if wanted("home") {
                 let shelf = await sampleShelf()
                 for dark in [false, true] {
-                    let view = AnyView(HomePage(state: AppState(), agentStore: store, shelf: shelf))
+                    let view = AnyView(HomePage(state: makeState(), agentStore: store, shelf: shelf))
                     await render(view, size: CGSize(width: width, height: 1400), dark: dark,
                                  to: directory.appendingPathComponent("home-\(dark ? "dark" : "light").png"))
                 }
@@ -166,7 +186,7 @@ enum SnapshotHarness {
                     ShelfPresentation.shared.section = section
                     let controller = NotchController()
                     controller.debugShow(.expanded)
-                    let view = AnyView(NotchRootView(controller: controller, state: AppState(), agentStore: store, shelf: shelf)
+                    let view = AnyView(NotchRootView(controller: controller, state: makeState(), agentStore: store, shelf: shelf)
                         .background(LinearGradient(colors: [Color(red: 0.2, green: 0.16, blue: 0.3), Color(red: 0.35, green: 0.18, blue: 0.3)],
                                                    startPoint: .top, endPoint: .bottom)))
                     await render(view, size: NotchController.panelSize, dark: true, to: directory.appendingPathComponent("\(name).png"))
@@ -175,7 +195,7 @@ enum SnapshotHarness {
                 for dark in [false, true] {
                     let suffix = dark ? "dark" : "light"
                     if wanted("menubar-shelf") {
-                        let menu = AnyView(MenuBarView(state: AppState(), agentStore: store, shelf: sample))
+                        let menu = AnyView(MenuBarView(state: makeState(), agentStore: store, shelf: sample))
                         await render(menu, size: CGSize(width: 360, height: 1300), dark: dark, to: directory.appendingPathComponent("menubar-shelf-\(suffix).png"))
                         // The section alone: in the full panel it sits below the scroll area's fold.
                         for (label, shelf) in [("section", sample), ("section-empty", empty)] {
@@ -192,7 +212,7 @@ enum SnapshotHarness {
             }
 
             // Agent Peek at each size. The canvas is the widest panel plus its shadow margin; the view sits top-leading.
-            let peekState = AppState()
+            let peekState = makeState()
             let savedSize = Preferences.shared.peekSize
             LiquidGlass.forceFallback = true
             let prefs = Preferences.shared

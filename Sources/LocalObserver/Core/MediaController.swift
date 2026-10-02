@@ -53,8 +53,20 @@ final class MediaController: ObservableObject {
     private var lastArtworkData: Data?
     private static let maxBridgeRestarts = 5
 
+    #if DEBUG
+    private var isDemo = false
+    /// Debug/demo (snapshot harness): shows this track instead of what's playing; the bridge never starts.
+    func loadDemo(track demoTrack: Track?, artwork demoArtwork: NSImage?) {
+        isDemo = true
+        track = demoTrack
+        artwork = demoArtwork
+    }
+    #else
+    private let isDemo = false
+    #endif
+
     func start() {
-        guard bridge == nil, fallbackTimer == nil else { return }
+        guard !isDemo, bridge == nil, fallbackTimer == nil else { return }
         if !startBridge() { startFallback() }
     }
 
@@ -140,6 +152,7 @@ final class MediaController: ObservableObject {
             // Restart after a pause if it dies (e.g. after sleep); fall back if it can't run at all.
             Task { @MainActor in
                 let media = MediaController.shared
+                guard !media.isDemo else { return }
                 media.bridge = nil
                 media.restartCount += 1
                 // Give up after a few attempts and poll Spotify/Music directly instead.
@@ -173,6 +186,7 @@ final class MediaController: ObservableObject {
     }
 
     private func apply(_ object: [String: Any]) {
+        guard !isDemo else { return }
         // A healthy message means the bridge works: reset the restart backoff.
         restartCount = 0
         restartDelay = 3
@@ -242,6 +256,7 @@ final class MediaController: ObservableObject {
     }
 
     private func pollFallback() {
+        guard !isDemo else { return }
         let running = FallbackPlayer.allCases.filter(\.isRunning)
         guard !running.isEmpty else {
             if track != nil { track = nil }

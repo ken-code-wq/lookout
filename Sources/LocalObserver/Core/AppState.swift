@@ -171,6 +171,7 @@ final class AppState: ObservableObject {
             Task { @MainActor in
                 // Re-installed each tick so the cadence follows window visibility:
                 // brisk while you're looking, cheap while it idles in the menu bar.
+                guard self?.isDemo == false else { return }
                 self?.refresh(quiet: true)
                 self?.scheduleTimer()
             }
@@ -185,16 +186,36 @@ final class AppState: ObservableObject {
         }
     }
 
+    #if DEBUG
+    /// Debug/demo (snapshot harness): shows these servers instead of scanning this Mac's ports, and hides
+    /// saved launchers and favorites. Never persisted; the scanner and timer stay off for this instance.
+    private var isDemo = false
+    func loadDemo(servers demo: [ServerEntry]) {
+        isDemo = true
+        timer?.invalidate()
+        timer = nil
+        scanTask?.cancel()
+        scanTask = nil
+        isScanning = false
+        managed = []
+        favorites = []
+        servers = demo
+        lastScan = Date()
+    }
+    #else
+    private let isDemo = false
+    #endif
+
     /// Coalesces: if a scan is already running, this call is a no-op.
     func refresh(quiet: Bool = false) {
-        guard scanTask == nil else { return }
+        guard scanTask == nil, !isDemo else { return }
         if !quiet {
             PortScanner.resetProbeCache()
             if !isScanning { isScanning = true }
         }
         scanTask = Task { [weak self] in
             let result = await PortScanner.scan()
-            guard let self else { return }
+            guard let self, !self.isDemo else { return }
             self.apply(result)
             self.scanTask = nil
             if self.isScanning { self.isScanning = false }
