@@ -357,18 +357,67 @@ public final class RepoStore: ObservableObject {
         }
     }
 
+    // MARK: Hand-off
+
+    /// Pushes a checkout (the main one or a worktree) of `repo`.
+    public func push(_ repo: Repo, path: String, branch: String) {
+        perform(repo, busyKey: path, verb: "Pushed \(branch) of", { _ in RepoGit.push(path) })
+    }
+
+    /// Removes a worktree with git, which refuses if anything is unsaved. The branch stays.
+    public func removeWorktree(_ repo: Repo, path: String) {
+        perform(repo, busyKey: path, verb: "Removed a worktree of", { root in RepoGit.removeWorktree(root, path: path) })
+    }
+
+    /// Pushes if needed, then opens a pull request for the branch with `gh pr create --fill` (title and body from
+    /// its commits). Reports the new pull request's number, or nil on failure.
+    public func createPull(_ repo: Repo, path: String, branch: String, draft: Bool = false, then: @escaping (Int?) -> Void) {
+        guard !isDemo, !busy.contains(path), let gh = RepoGitHub.cliPath else {
+            onActionResult?(RepoGitHub.cliPath == nil ? "The GitHub CLI isn't installed" : "Busy", false)
+            then(nil)
+            return
+        }
+        busy.insert(path)
+        Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) { () -> (Int?, String) in
+                let push = RepoGit.push(path)
+                guard push.ok else { return (nil, push.stderr.split(separator: "\n").first.map(String.init) ?? "Push failed") }
+                var args = ["pr", "create", "--fill", "--head", branch]
+                if draft { args.append("--draft") }
+                let out = RepoGit.run(gh, args, in: path, timeout: 90)
+                let text = out.stdout + out.stderr
+                // gh prints the URL on success, and the existing one when a pull request is already open.
+                let number = text.range(of: #"/pull/(\d+)"#, options: .regularExpression)
+                    .flatMap { Int(text[$0].dropFirst("/pull/".count)) }
+                return (number, out.ok ? "" : (out.stderr.split(separator: "\n").first.map(String.init) ?? "gh failed"))
+            }.value
+            guard let self else { return }
+            self.busy.remove(path)
+            if let number = result.0 {
+                self.onActionResult?("Opened #\(number) for \(branch)", true)
+            } else {
+                self.onActionResult?(result.1, false)
+            }
+            self.refCache[repo.root] = nil
+            self.refresh(quiet: true)
+            self.refreshGitHub()
+            then(result.0)
+        }
+    }
+
     public func fetchAll() {
         for repo in visibleRepos where !repo.isLocalOnly { fetch(repo) }
     }
 
-    private func perform(_ repo: Repo, verb: String, _ work: @escaping @Sendable (String) -> RepoGit.Output) {
-        guard !isDemo, !busy.contains(repo.root) else { return }
-        busy.insert(repo.root)
+    private func perform(_ repo: Repo, busyKey: String? = nil, verb: String, _ work: @escaping @Sendable (String) -> RepoGit.Output) {
+        let key = busyKey ?? repo.root
+        guard !isDemo, !busy.contains(key) else { return }
+        busy.insert(key)
         let root = repo.root, name = repo.name
         Task { [weak self] in
             let out = await Task.detached(priority: .userInitiated) { work(root) }.value
             guard let self else { return }
-            self.busy.remove(root)
+            self.busy.remove(key)
             if out.ok {
                 self.onActionResult?("\(verb) \(name)", true)
             } else {

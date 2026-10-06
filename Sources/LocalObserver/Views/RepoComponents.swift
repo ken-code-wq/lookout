@@ -306,3 +306,95 @@ struct GitHubStatusBanner: View {
         .padding(.vertical, 10)
     }
 }
+
+// MARK: - Hand-off
+
+/// What to do with an agent's work once it stops: review it, push it, open a pull request, or clear the worktree.
+/// Reads the checkout's live state (uncommitted, unpushed, pull request) from the Repos store.
+struct AgentHandoffPanel: View {
+    var session: AgentSession
+    @ObservedObject private var repos = RepoStore.shared
+
+    var body: some View {
+        if let (repo, branch) = AgentLinks.target(of: session, in: repos) {
+            let path = session.checkout?.root ?? repo.root
+            let worktree = repo.worktrees.first { $0.path == path }
+            let changes = worktree?.changes ?? (worktree == nil ? repo.changes : nil)
+            let uncommitted = changes?.total ?? 0
+            let unpushed = worktree?.ahead ?? repo.unpushedCount
+            let pull = repos.pull(for: repo, branch: branch)
+            let isDefault = branch == repo.defaultBranch
+            let busy = repos.busy.contains(path)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 6) {
+                    BranchTag(branch: branch, worktree: worktree != nil, maxWidth: 220)
+                    RepoStateChips(changes: changes, unpushed: unpushed, behind: 0)
+                    if busy { ProgressView().controlSize(.small) }
+                }
+                Text(advice(uncommitted: uncommitted, unpushed: unpushed, pull: pull, isDefault: isDefault))
+                    .font(NFont.caption).foregroundStyle(N.text2).fixedSize(horizontal: false, vertical: true)
+                FlowLayout(spacing: 6, lineSpacing: 6) {
+                    if SessionReplayReader.supports(session.agent), !session.sourcePath.isEmpty {
+                        Button { LiveSurfaces.shared.replay(session) } label: { Label("Review changes", systemImage: "play.rectangle") }
+                            .buttonStyle(SecondaryButtonStyle())
+                    }
+                    Button { RepoActions.openEditor(path) } label: { Label("Open in editor", systemImage: "chevron.left.forwardslash.chevron.right") }
+                        .buttonStyle(SecondaryButtonStyle())
+                    if !repo.isLocalOnly, unpushed > 0, pull != nil || isDefault {
+                        Button { repos.push(repo, path: path, branch: branch) } label: { Label("Push \(unpushed)", systemImage: "arrow.up") }
+                            .buttonStyle(SecondaryButtonStyle()).disabled(busy)
+                    }
+                    if let pull {
+                        Button { GitHubNav.open(pull: pull.repo, number: pull.number) } label: {
+                            Label("View #\(pull.number)", systemImage: "arrow.triangle.pull")
+                        }
+                        .buttonStyle(SecondaryButtonStyle())
+                    } else if !isDefault, repo.github != nil {
+                        Button {
+                            repos.createPull(repo, path: path, branch: branch) { number in
+                                if let number, let slug = repo.github { GitHubNav.open(pull: slug, number: number) }
+                            }
+                        } label: {
+                            Label(unpushed > 0 ? "Push and open PR" : "Open pull request", systemImage: "arrow.triangle.pull")
+                        }
+                        .buttonStyle(SecondaryButtonStyle())
+                        .disabled(busy || session.process != nil && session.state == .working)
+                        .help("Pushes \(branch) and runs gh pr create --fill: title and description from its commits")
+                    }
+                    if let worktree, uncommitted == 0, unpushed == 0, session.process == nil {
+                        HandoffRemoveButton { repos.removeWorktree(repo, path: worktree.path) }
+                            .disabled(busy)
+                    }
+                }
+            }
+        }
+    }
+
+    private func advice(uncommitted: Int, unpushed: Int, pull: PullRequest?, isDefault: Bool) -> String {
+        if uncommitted > 0 {
+            return "\(uncommitted) file\(uncommitted == 1 ? " isn't" : "s aren't") committed yet. Review them, then ask the agent to commit (or commit yourself) before pushing."
+        }
+        if let pull { return unpushed > 0 ? "\(unpushed) new commit\(unpushed == 1 ? "" : "s") to push to #\(pull.number)." : "Everything is pushed to #\(pull.number): \(pull.checks.title.lowercased())." }
+        if isDefault { return unpushed > 0 ? "\(unpushed) commit\(unpushed == 1 ? "" : "s") on the default branch aren't pushed." : "Nothing left to push." }
+        return unpushed > 0 ? "\(unpushed) commit\(unpushed == 1 ? "" : "s") ready. Open a pull request to push and share them." : "Committed and pushed, with no pull request yet."
+    }
+}
+
+/// "Remove worktree" that asks once more first.
+private struct HandoffRemoveButton: View {
+    var action: () -> Void
+    @State private var armed = false
+
+    var body: some View {
+        Button {
+            if armed { armed = false; action() } else {
+                armed = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { armed = false }
+            }
+        } label: {
+            Label(armed ? "Remove it?" : "Remove worktree", systemImage: "trash")
+        }
+        .buttonStyle(SecondaryButtonStyle(tint: N.red))
+        .help("git worktree remove: the folder goes, the branch stays")
+    }
+}
