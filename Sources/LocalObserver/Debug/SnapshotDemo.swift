@@ -203,16 +203,17 @@ enum SnapshotDemo {
                              resetsAt: now.addingTimeInterval(resetsIn), windowDuration: duration, detail: detail,
                              observedAt: now, source: source, account: "dev@example.com")
         }
+        // Claude's session runs hot and Codex has room, so limit routing has a switch to suggest.
         let claude = "Anthropic usage API", codex = "Codex usage API", agy = "agy usage report", copilot = "GitHub Copilot API"
         return [
             AgentLimitReport(agent: .claude, status: .connected, plan: "Max 5x", account: "dev@example.com", windows: [
-                window(.claude, "session", "5-hour session", .session, 64, resetsIn: 1.6 * hour, duration: 5 * hour, source: claude),
+                window(.claude, "session", "5-hour session", .session, 92, resetsIn: 0.8 * hour, duration: 5 * hour, source: claude),
                 window(.claude, "weekly", "Weekly · all models", .weekly, 41, resetsIn: 3.3 * day, duration: 7 * day, source: claude),
                 window(.claude, "weekly-opus", "Weekly · Opus", .weeklyModel, 18, resetsIn: 3.3 * day, duration: 7 * day, source: claude),
             ], fetchedAt: now, source: claude),
             AgentLimitReport(agent: .codex, status: .connected, plan: "Plus", account: "dev@example.com", windows: [
                 window(.codex, "session", "5-hour", .session, 27, resetsIn: 3.1 * hour, duration: 5 * hour, source: codex),
-                window(.codex, "weekly", "Weekly", .weekly, 52, resetsIn: 4.5 * day, duration: 7 * day, source: codex),
+                window(.codex, "weekly", "Weekly", .weekly, 10, resetsIn: 4.5 * day, duration: 7 * day, source: codex),
             ], fetchedAt: now, source: codex),
             AgentLimitReport(agent: .antigravity, status: .connected, plan: "Pro", account: "dev@example.com", windows: [
                 window(.antigravity, "pro-5h", "Gemini Pro · 5-hour", .session, 83, resetsIn: 0.7 * hour, duration: 5 * hour, source: agy),

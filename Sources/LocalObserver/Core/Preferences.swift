@@ -330,6 +330,8 @@ final class Preferences: ObservableObject {
     @Published var notifyPace: Bool { didSet { defaults.set(notifyPace, forKey: Keys.notifyPace) } }
     /// A limit you used up (95%+) is available again: notification plus a notch drop-down at the reset time.
     @Published var notifyReset: Bool { didSet { defaults.set(notifyReset, forKey: Keys.notifyReset) } }
+    /// A limit crosses 80% at a pace that empties it before the reset: say so, and which provider has room.
+    @Published var notifyRouting: Bool { didSet { defaults.set(notifyRouting, forKey: Keys.notifyRouting) } }
 
     /// System-wide shortcut that shows or hides Agent Peek. Nil turns it off.
     @Published var peekHotKey: HotKey? { didSet { saveHotKey(peekHotKey, Keys.peekHotKey) } }
@@ -380,6 +382,7 @@ final class Preferences: ObservableObject {
         static let notifyFinished = "LocalObserver.notifyFinished"
         static let notifyPace = "LocalObserver.notifyPace"
         static let notifyReset = "LocalObserver.notifyReset"
+        static let notifyRouting = "LocalObserver.notifyRouting"
         static let limitProviders = "LocalObserver.limitProviders"
         static let limitWindowChoice = "LocalObserver.limitWindowChoice"
         static let notchHUD = "LocalObserver.notchHUD"
@@ -438,6 +441,7 @@ final class Preferences: ObservableObject {
         notifyFinished = defaults.bool(forKey: Keys.notifyFinished)
         notifyPace = defaults.bool(forKey: Keys.notifyPace)
         notifyReset = defaults.object(forKey: Keys.notifyReset) as? Bool ?? true
+        notifyRouting = defaults.object(forKey: Keys.notifyRouting) as? Bool ?? true
         limitProviders = (defaults.stringArray(forKey: Keys.limitProviders) ?? []).compactMap(AgentKind.init(rawValue:))
         limitWindowChoice = LimitWindowChoice(rawValue: defaults.string(forKey: Keys.limitWindowChoice) ?? "") ?? .shortest
         notchHUD = defaults.object(forKey: Keys.notchHUD) as? Bool ?? true

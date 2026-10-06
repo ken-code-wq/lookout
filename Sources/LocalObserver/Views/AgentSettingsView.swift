@@ -606,6 +606,14 @@ private struct GeneralPane: View {
                     .toggleStyle(.switch).labelsHidden()
                 }
                 SettingsDivider()
+                SettingsRow(title: "When another provider has room", detail: "A limit passes 80% and will run out early: which agent to switch to") {
+                    Toggle("When another provider has room", isOn: Binding(
+                        get: { prefs.notifyRouting },
+                        set: { prefs.notifyRouting = $0; if $0 { requestPermission() } }
+                    ))
+                    .toggleStyle(.switch).labelsHidden()
+                }
+                SettingsDivider()
                 SettingsRow(title: "When a used-up limit resets", detail: "Also drops down from the notch, so you know you can start again") {
                     Toggle("When a used-up limit resets", isOn: Binding(
                         get: { prefs.notifyReset },

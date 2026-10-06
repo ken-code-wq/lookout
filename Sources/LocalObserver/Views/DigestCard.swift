@@ -4,8 +4,8 @@ import LocalObserverRepos
 import LocalObserverDisk
 
 /// The morning digest: what happened since you last looked. Agents that finished, pull requests waiting on you,
-/// failing CI, inbox items for you, budgets nearing their cap, and disk space. Each line goes to its page;
-/// dismissing hides it until the next morning.
+/// failing CI, inbox items for you, which agent to use while a plan limit runs short, budgets nearing their cap, and
+/// disk space. Each line goes to its page; dismissing hides it until the next morning.
 struct DigestCard: View {
     @ObservedObject var agentStore: AgentStore
     @ObservedObject var repos: RepoStore = .shared
@@ -77,6 +77,10 @@ struct DigestCard: View {
         if !forYou.isEmpty {
             lines.append(Line(id: "inbox", symbol: "tray.full", tint: GH.link, text: "\(forYou.count) GitHub notification\(forYou.count == 1 ? "" : "s") for you",
                               detail: forYou.prefix(2).map { "\($0.reasonTitle): \($0.title)" }.joined(separator: ", "), page: .inbox))
+        }
+        let advice = LimitRouting.advice(reports: agentStore.limitReports)
+        if advice.isActionable {
+            lines.append(Line(id: "route", symbol: advice.symbol, tint: advice.tint, text: advice.headline, detail: advice.detail, page: .agentLimits))
         }
         for (agent, budget) in agentStore.settings.budgets {
             guard let p = (agentStore.spend[agent] ?? AgentSpend()).progress(budget), p.fraction >= budget.warnAt else { continue }
