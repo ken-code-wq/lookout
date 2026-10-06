@@ -99,6 +99,7 @@ enum SnapshotHarness {
             SnapshotDemo.loadGitHub(into: GitHubStore.shared)
             SnapshotDemo.loadDisk(into: DiskStore.shared)
             SnapshotDemo.loadCI(into: CIStore.shared)
+            SnapshotDemo.loadContributions(into: GitHubStore.shared)
         } else {
             AppAudio.shared.refresh()
         }

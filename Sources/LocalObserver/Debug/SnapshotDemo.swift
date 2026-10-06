@@ -380,6 +380,40 @@ enum SnapshotDemo {
         store.selectedRun = 9002
     }
 
+    /// A year of contributions with a believable rhythm: busy weekdays, quiet weekends, a holiday gap, a recent run.
+    static func loadContributions(into store: GitHubStore) {
+        let cal = Calendar(identifier: .gregorian)
+        let today = cal.startOfDay(for: Date())
+        guard let start = cal.date(byAdding: .day, value: -364 - cal.component(.weekday, from: today) + 1, to: today) else { return }
+        var weeks: [[GHContributionDay]] = []
+        var seed: UInt64 = 42
+        func random() -> Double { seed = seed &* 6364136223846793005 &+ 1442695040888963407; return Double(seed >> 33) / Double(1 << 31) }
+        var date = start
+        var week: [GHContributionDay] = []
+        while date <= today {
+            let weekday = cal.component(.weekday, from: date) - 1
+            let daysAgo = cal.dateComponents([.day], from: date, to: today).day ?? 0
+            let holiday = (280...296).contains(daysAgo)
+            let base = weekday == 0 || weekday == 6 ? 0.35 : 0.85
+            let ramp = daysAgo < 120 ? 1.8 : 1.0
+            let count = holiday || random() > base ? 0 : Int(random() * 9 * ramp) + (daysAgo < 9 ? 3 : 0)
+            let level = count == 0 ? 0 : count < 3 ? 1 : count < 6 ? 2 : count < 10 ? 3 : 4
+            week.append(GHContributionDay(date: GHContributionDay.parser.string(from: date), count: count, level: level, weekday: weekday))
+            if weekday == 6 { weeks.append(week); week = [] }
+            date = cal.date(byAdding: .day, value: 1, to: date) ?? today.addingTimeInterval(86_400)
+        }
+        if !week.isEmpty { weeks.append(week) }
+        let total = weeks.flatMap { $0 }.reduce(0) { $0 + $1.count }
+        let year = GHContributionYear(year: nil, weeks: weeks, total: total, commits: Int(Double(total) * 0.82), pulls: Int(Double(total) * 0.09),
+                                      reviews: Int(Double(total) * 0.06), issues: Int(Double(total) * 0.03), restricted: 212,
+                                      topRepos: [GHRepoContribution(repo: "acme/aurora-api", count: 412, color: "#00ADD8"),
+                                                 GHRepoContribution(repo: "acme/pixel-garden", count: 298, color: "#3178c6"),
+                                                 GHRepoContribution(repo: "acme/tidepool", count: 141, color: "#3572A5"),
+                                                 GHRepoContribution(repo: "acme/orbit-cli", count: 88, color: "#dea584")],
+                                      years: [2026, 2025, 2024, 2023])
+        store.loadDemoContributions(year)
+    }
+
     static func loadDisk(into store: DiskStore) {
         let now = Date()
         func ago(_ d: Double) -> Date { now.addingTimeInterval(-d * 86_400) }

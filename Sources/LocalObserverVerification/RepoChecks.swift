@@ -14,6 +14,7 @@ enum RepoChecks {
         checkSlugs()
         checkHead()
         checkGitHubParsing()
+        checkContributionStats()
         checkDiffParsing()
         checkGitHubStore()
         checkRealRepository()
@@ -114,6 +115,13 @@ enum RepoChecks {
         if let branch = (try? GitHubAPI.branches(repo.slug, defaultBranch: base).get())?.first(where: { !$0.isDefault }),
            let c = ok("compare \(base)...\(branch.name)", GitHubAPI.compare(repo.slug, base: base, head: branch.name)) {
             print("    ahead \(c.aheadBy), \(c.files) files, title \"\(c.suggestedTitle(head: branch.name))\"")
+        }
+        if let year = ok("contributions", GitHubAPI.contributions(year: nil)) {
+            let s = year.streaks
+            print("    \(year.total) in \(year.weeks.count) weeks, streak \(s.current)/\(s.longest), years \(year.years), top \(year.topRepos.first?.repo ?? "-")")
+            if let day = year.days.last(where: { $0.count > 0 }), let detail = ok("contribution day \(day.date)", GitHubAPI.contributionDetail(date: day.date)) {
+                print("    \(day.count) that day: \(detail.commits.map { "\($0.repo) ×\($0.count)" }), \(detail.items.count) items, \(detail.restricted) private")
+            }
         }
         // CI: the most recently pushed repository that has workflow runs.
         for candidate in repos.prefix(15) {
@@ -225,6 +233,16 @@ enum RepoChecks {
         precondition(GitCheckout.parseHead("ref: refs/heads/feat/a/b\n").branch == "feat/a/b", "HEAD branch parsing")
         let detached = GitCheckout.parseHead("0123456789abcdef\n")
         precondition(detached.branch == nil && detached.detached == "0123456789abcdef", "Detached HEAD parsing")
+    }
+
+    private static func checkContributionStats() {
+        func d(_ date: String, _ n: Int, _ w: Int) -> GHContributionDay { GHContributionDay(date: date, count: n, level: n > 0 ? 1 : 0, weekday: w) }
+        let year = GHContributionYear(year: nil, weeks: [[d("2026-09-27", 1, 0), d("2026-09-28", 2, 1), d("2026-09-29", 0, 2), d("2026-09-30", 3, 3)],
+                                                       [d("2026-10-01", 1, 4), d("2026-10-02", 5, 5), d("2026-10-03", 0, 6)]], total: 12)
+        // Today (the last day) being empty doesn't break the current streak.
+        precondition(year.streaks == (3, 3), "Streaks: \(year.streaks)")
+        precondition(year.activeDays == 5 && year.busiestDay?.date == "2026-10-02", "Active and busiest days")
+        precondition(year.byWeekday == [1, 2, 0, 3, 1, 5, 0], "By weekday")
     }
 
     private static func checkGitHubParsing() {

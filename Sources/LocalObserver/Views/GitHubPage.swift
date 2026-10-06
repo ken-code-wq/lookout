@@ -14,7 +14,7 @@ struct GitHubPage: View {
         Group {
             switch store.route {
             case nil:
-                GHRepositoryList(store: store, repos: repos)
+                GHRepositoryList(store: store, repos: repos, agents: agents)
             case .repo(let slug, let tab):
                 GHRepoView(store: store, repos: repos, slug: slug, tab: tab)
             case .pull(let slug, let number):
@@ -202,12 +202,16 @@ struct GHMenuButton<Content: View>: View {
 struct GHRepositoryList: View {
     @ObservedObject var store: GitHubStore
     @ObservedObject var repos: RepoStore
+    var agents: AgentStore
 
     var body: some View {
         GHScaffold(store: store, maxWidth: 1080) { _ in
             VStack(alignment: .leading, spacing: 0) {
                 header
                 GitHubStatusBanner(store: repos)
+                if repos.gitHub.login != nil || store.contributions[0] != nil {
+                    GHContributionGraph(store: store, agents: agents).padding(.top, 14)
+                }
                 controls.padding(.vertical, 14)
                 Rectangle().fill(GH.borderMuted).frame(height: 1)
                 list
