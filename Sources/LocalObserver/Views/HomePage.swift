@@ -34,6 +34,8 @@ struct HomePage: View {
             VStack(alignment: .leading, spacing: 0) {
                 PageHeader(symbol: SidebarItem.home.symbol, title: SidebarItem.home.title, subtitle: AnyView(summary(sessions: sessions, waiting: waiting, servers: servers)))
 
+                DigestCard(agentStore: agentStore, navigate: navigate)
+
                 if !waiting.isEmpty {
                     NeedsYouCard(sessions: waiting, open: open)
                         .padding(.bottom, 20)
