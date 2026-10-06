@@ -38,6 +38,11 @@ struct AgentInspectorView: View {
             Rectangle().fill(N.divider).frame(height: 1)
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
+                    if AgentLinks.target(of: session, in: repos) != nil {
+                        group(session.process == nil || session.state != .working ? "Hand-off" : "Work so far") {
+                            AgentHandoffPanel(session: session)
+                        }
+                    }
                     group("Session") {
                         PropertyRow(symbol: "folder", label: "Project") {
                             Text(session.projectName).help(session.projectPath)

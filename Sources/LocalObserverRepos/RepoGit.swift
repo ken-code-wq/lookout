@@ -272,5 +272,11 @@ public enum RepoGit {
     }
 
     /// Forgets worktrees whose folders are gone.
+    /// Pushes the checked-out branch, setting its upstream on first push.
+    public static func push(_ path: String) -> Output { git(path, ["push", "--set-upstream", "origin", "HEAD", "--quiet"], timeout: 120) }
+
+    /// No --force: git refuses when the worktree has modified or untracked files.
+    public static func removeWorktree(_ mainRoot: String, path: String) -> Output { git(mainRoot, ["worktree", "remove", path], timeout: 120) }
+
     public static func pruneWorktrees(_ root: String) -> Output { git(root, ["worktree", "prune"]) }
 }
