@@ -358,6 +358,7 @@ private struct RunningSessionRow: View {
                         SessionBranchTag(session: session, maxWidth: 170)
                         SessionPullChip(session: session)
                         SessionDiffChip(session: session)
+                        LaunchedTaskTag(session: session)
                     }
                     Text(subtitle)
                         .font(NFont.caption)
@@ -509,8 +510,9 @@ private struct RecentSessionRow: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
                 Text(session.title).font(NFont.body).foregroundStyle(N.text).lineLimit(1)
+                LaunchedTaskTag(session: session)
             }
             .padding(.trailing, 12)
             .frame(maxWidth: .infinity, alignment: .leading)

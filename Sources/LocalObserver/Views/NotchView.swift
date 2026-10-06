@@ -396,6 +396,10 @@ struct NotchRootView: View {
                 Spacer(minLength: notch.width + 16)
                 HStack(spacing: 2) {
                     timerButton
+                    NotchIconButton(symbol: "plus", help: "New agent task") {
+                        controller.collapse()
+                        AgentTaskCoordinator.shared.present(openWindow: true)
+                    }
                     NotchIconButton(symbol: "arrow.clockwise", help: "Refresh", spinning: agentStore.isScanning) {
                         state.refresh()
                         agentStore.refresh(forceLimits: true)

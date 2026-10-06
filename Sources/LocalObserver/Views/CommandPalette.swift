@@ -144,6 +144,8 @@ struct CommandPalette: View {
         let repos = RepoStore.shared, github = GitHubStore.shared, ci = CIStore.shared
 
         items += [
+            PaletteItem(id: "a:new-task", group: .actions, title: "New agent task…", symbol: "plus.bubble",
+                        keywords: "start launch run prompt worktree claude codex opencode cursor") { AgentTaskCoordinator.shared.present() },
             PaletteItem(id: "a:new-server", group: .actions, title: "New server…", symbol: "plus", keywords: "launcher start") { state.draft = LauncherDraft() },
             PaletteItem(id: "a:refresh", group: .actions, title: "Refresh everything", symbol: "arrow.clockwise") {
                 state.refresh(); agentStore.refresh(); repos.refresh(); repos.refreshGitHub(); ci.refresh()

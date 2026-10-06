@@ -128,6 +128,7 @@ struct LocalObserverVerification {
         DiskChecks.run()
         ReplayChecks.run()
         DiffChecks.run()
+        AgentTaskChecks.run()
 
         for agent in AgentKind.allCases {
             precondition(AgentIconStore.image(for: agent) != nil, "Missing official icon for \(agent.name)")

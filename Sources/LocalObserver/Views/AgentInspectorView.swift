@@ -38,6 +38,7 @@ struct AgentInspectorView: View {
             Rectangle().fill(N.divider).frame(height: 1)
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
+                    LaunchedTaskSection(session: session)
                     if AgentLinks.target(of: session, in: repos) != nil {
                         group(session.process == nil || session.state != .working ? "Hand-off" : "Work so far") {
                             AgentHandoffPanel(session: session)

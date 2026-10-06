@@ -248,6 +248,11 @@ struct CIRunDetail: View {
                 if run.status == .failure {
                     Button { store.rerun(run, failedOnly: true) } label: { Label("Re-run failed", systemImage: "arrow.clockwise") }
                         .buttonStyle(SecondaryButtonStyle())
+                    if repos.localRepo(slug: run.repo) != nil {
+                        Button { fixWithAgent(nil) } label: { Label("Fix with an agent", systemImage: "plus.bubble") }
+                            .buttonStyle(SecondaryButtonStyle())
+                            .help("Start an agent on \(run.branch) with a prompt to fix this run")
+                    }
                 }
                 if !run.status.isActive {
                     Button { store.rerun(run, failedOnly: false) } label: { Label("Re-run all", systemImage: "arrow.clockwise.circle") }
@@ -313,6 +318,11 @@ struct CIRunDetail: View {
                     } label: { Label("Copy failure for an agent", systemImage: "doc.on.doc") }
                         .buttonStyle(GhostButtonStyle(tint: N.blue))
                         .help("The failing step and the log around the first error, as a prompt")
+                    if repos.localRepo(slug: run.repo) != nil {
+                        Button { fixWithAgent(handoffText(job, lines)) } label: { Label("Start an agent", systemImage: "plus.bubble") }
+                            .buttonStyle(GhostButtonStyle(tint: N.blue))
+                            .help("A new agent task with this failure as its prompt")
+                    }
                     ForEach(sessions.prefix(2)) { session in
                         Button {
                             RepoActions.copy(handoffText(job, lines))
@@ -357,6 +367,18 @@ struct CIRunDetail: View {
         case .command: return Color(red: 0.55, green: 0.75, blue: 1)
         case .plain: return .white.opacity(0.72)
         }
+    }
+
+    /// A new agent task for this run: in the checkout that has its branch, else a worktree from it. The prompt is
+    /// the failure itself when the log is loaded, otherwise the "Fix failing CI" template.
+    private func fixWithAgent(_ failure: String?) {
+        guard let repo = repos.localRepo(slug: run.repo) else { return }
+        let checkout = repo.branch == run.branch ? repo.root : repo.worktrees.first { $0.branch == run.branch }?.path
+        let template = AgentTaskStore.shared.templates.first { $0.title == AgentPromptTemplate.fixCI }
+            ?? AgentPromptTemplate.defaults[0]
+        let prompt = failure ?? template.expanded(repo: repo.name, branch: run.branch) + "\nFailing run: \(run.url)"
+        AgentTaskCoordinator.shared.present(AgentTaskDraft(repoRoot: repo.root, prompt: prompt,
+                                                           base: checkout == nil ? run.branch : nil, checkout: checkout))
     }
 
     private func handoffText(_ job: GHJob, _ lines: [GHLogLine]) -> String {
