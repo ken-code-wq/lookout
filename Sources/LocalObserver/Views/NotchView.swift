@@ -841,7 +841,7 @@ private struct NotchSessionRow: View {
                     }
                 }
                 Spacer(minLength: 6)
-                if AgentActivityBucket(session) == .yourTurn && session.process?.host != nil { NotchReplyButton(session: session) }
+                if AgentActivityBucket(session) == .yourTurn && session.process != nil { NotchReplyButton(session: session) }
                 HostAppIcon(session: session, size: 16)
                 stateLabel
             }
