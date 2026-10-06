@@ -45,6 +45,7 @@ struct AgentUsagePage: View {
         HStack(spacing: 14) {
             Label(scopeDescription, systemImage: "line.3.horizontal.decrease")
             RelativeTimeText(date: store.lastRefresh)
+            WeeklyReportLink()
         }
         .font(NFont.small)
         .foregroundStyle(N.text2)

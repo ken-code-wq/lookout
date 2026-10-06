@@ -127,6 +127,8 @@ struct NotchLimitsPage: View {
                 .foregroundStyle(.white.opacity(0.4))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
+                let advice = LimitRouting.advice(reports: agentStore.limitReports)
+                if NotchLimitAdviceLine.shows(advice) { NotchLimitAdviceLine(advice: advice) }
                 let layout = Self.layout(for: shown.count)
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Self.columnSpacing, alignment: .top), count: layout.columns),
                           alignment: .leading, spacing: Self.rowSpacing) {
@@ -182,7 +184,8 @@ struct NotchLimitsPage: View {
             index += layout.columns
         }
         let gridRows = (shown.count + layout.columns - 1) / layout.columns
-        return pickerHeight + 12 + total + CGFloat(max(gridRows - 1, 0)) * rowSpacing
+        let advice = NotchLimitAdviceLine.shows(LimitRouting.advice(reports: agentStore.limitReports)) ? NotchLimitAdviceLine.height + 12 : 0
+        return pickerHeight + 12 + advice + total + CGFloat(max(gridRows - 1, 0)) * rowSpacing
     }
 
     private var providerPicker: some View {

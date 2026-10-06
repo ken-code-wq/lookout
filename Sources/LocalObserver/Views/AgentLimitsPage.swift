@@ -24,6 +24,7 @@ struct AgentLimitsPage: View {
                         SettingsLink { Text("Choose agents") }.buttonStyle(PrimaryButtonStyle())
                     }
                 } else {
+                    LimitAdviceBanner(store: store).padding(.bottom, 30)
                     TimelineView(.periodic(from: .now, by: 30)) { context in
                         VStack(alignment: .leading, spacing: 34) {
                             ForEach(withWindows) { report in

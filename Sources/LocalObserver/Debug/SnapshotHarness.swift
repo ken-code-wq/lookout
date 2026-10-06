@@ -102,6 +102,7 @@ enum SnapshotHarness {
             SnapshotDemo.loadCI(into: CIStore.shared)
             SnapshotDemo.loadContributions(into: GitHubStore.shared)
             SnapshotDemo.loadAgentTasks(into: AgentTaskStore.shared)
+            SnapshotDemo.loadWeekly(into: WeeklyReportModel.shared)
         } else {
             AppAudio.shared.refresh()
         }
@@ -137,6 +138,8 @@ enum SnapshotHarness {
                     prompt: "Add a retry with backoff to the search client, and tests for it."))), CGSize(width: 580, height: 640)),
                 ("replay", AnyView(replay(store)), CGSize(width: 1180, height: 820)),
                 ("agent-diff", AnyView(agentDiff(store)), CGSize(width: 1180, height: 1100)),
+                ("weekly", AnyView(WeeklyReportSheet(agentStore: store)), CGSize(width: WeeklyReportCard.width + 48, height: 820)),
+                ("weekly-card", AnyView(weeklyCard(store)), CGSize(width: WeeklyReportCard.width, height: 760)),
                 ("settings-disk", AnyView(DiskSettingsPane()), CGSize(width: 620, height: 560)),
                 ("gh-issues", AnyView(GHRepoView(store: GitHubStore.shared, repos: RepoStore.shared, slug: "acme/aurora-api", tab: .issues)), CGSize(width: width, height: 700)),
                 ("gh-issue", AnyView(GHIssueView(store: GitHubStore.shared, slug: "acme/aurora-api", number: 231)), CGSize(width: width, height: 900)),
@@ -200,6 +203,7 @@ enum SnapshotHarness {
                     await render(view, size: size, dark: dark, to: url)
                 }
             }
+            if wanted("weekly-export") { exportWeekly(store, to: directory) }
             if wanted("home") {
                 let shelf = await sampleShelf()
                 for dark in [false, true] {
@@ -428,6 +432,32 @@ enum SnapshotHarness {
     @ViewBuilder private static func agentDiff(_ store: AgentStore) -> some View {
         if let session = store.runningSessions.first, let root = AgentDiffs.root(of: session) {
             AgentDiffView(session: session, root: root) {}
+        }
+    }
+
+    /// Last week's card on its own, in the render's appearance.
+    private static func weeklyCard(_ store: AgentStore) -> some View {
+        WeeklyCardShot(store: store).frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    private struct WeeklyCardShot: View {
+        var store: AgentStore
+        @Environment(\.colorScheme) private var scheme
+        var body: some View {
+            let reports = WeeklyReportModel.shared.reports(store: store, github: .shared, weekOf: WeeklyReport.week(offset: -1, from: Date()).start)
+            WeeklyReportCard(report: reports.current, previous: reports.previous, palette: .init(dark: scheme == .dark))
+        }
+    }
+
+    /// The card through ImageRenderer, the way Export PNG draws it.
+    private static func exportWeekly(_ store: AgentStore, to directory: URL) {
+        let reports = WeeklyReportModel.shared.reports(store: store, github: .shared)
+        for dark in [false, true] {
+            let renderer = ImageRenderer(content: WeeklyReportCard(report: reports.current, previous: reports.previous, palette: .init(dark: dark)))
+            renderer.scale = 2
+            guard let tiff = renderer.nsImage?.tiffRepresentation,
+                  let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { continue }
+            try? png.write(to: directory.appendingPathComponent("weekly-export-\(dark ? "dark" : "light").png"))
         }
     }
 

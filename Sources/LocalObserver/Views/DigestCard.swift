@@ -4,8 +4,8 @@ import LocalObserverRepos
 import LocalObserverDisk
 
 /// The morning digest: what happened since you last looked. Agents that finished, pull requests waiting on you,
-/// failing CI, inbox items for you, budgets nearing their cap, and disk space. Each line goes to its page;
-/// dismissing hides it until the next morning.
+/// failing CI, inbox items for you, which agent to use while a plan limit runs short, budgets nearing their cap, and
+/// disk space. Each line goes to its page; dismissing hides it until the next morning.
 struct DigestCard: View {
     @ObservedObject var agentStore: AgentStore
     @ObservedObject var repos: RepoStore = .shared
@@ -36,10 +36,13 @@ struct DigestCard: View {
         var text: String
         var detail: String
         var page: SidebarItem
+        /// Runs instead of going to `page`, for lines that open a sheet.
+        var action: (() -> Void)? = nil
     }
 
     var lines: [Line] {
         var lines: [Line] = []
+        if Calendar.current.component(.weekday, from: Date()) == 2, let week = yourWeek { lines.append(week) }
         let finished = agentStore.snapshot.sessions.filter { $0.updatedAt >= since && $0.process == nil }
         if !finished.isEmpty {
             let cost = finished.compactMap(\.cost).reduce(0, +)
@@ -78,6 +81,10 @@ struct DigestCard: View {
             lines.append(Line(id: "inbox", symbol: "tray.full", tint: GH.link, text: "\(forYou.count) GitHub notification\(forYou.count == 1 ? "" : "s") for you",
                               detail: forYou.prefix(2).map { "\($0.reasonTitle): \($0.title)" }.joined(separator: ", "), page: .inbox))
         }
+        let advice = LimitRouting.advice(reports: agentStore.limitReports)
+        if advice.isActionable {
+            lines.append(Line(id: "route", symbol: advice.symbol, tint: advice.tint, text: advice.headline, detail: advice.detail, page: .agentLimits))
+        }
         for (agent, budget) in agentStore.settings.budgets {
             guard let p = (agentStore.spend[agent] ?? AgentSpend()).progress(budget), p.fraction >= budget.warnAt else { continue }
             lines.append(Line(id: "budget-\(agent.rawValue)", symbol: "dollarsign.circle", tint: p.fraction >= 1 ? TagColor.red.fg : TagColor.orange.fg,
@@ -108,7 +115,7 @@ struct DigestCard: View {
                         .help("Hide until tomorrow; the next digest starts from now")
                 }
                 VStack(spacing: 2) {
-                    ForEach(lines) { line in DigestRow(line: line) { navigate(line.page) } }
+                    ForEach(lines) { line in DigestRow(line: line) { if let action = line.action { action() } else { navigate(line.page) } } }
                 }
             }
             .padding(18)
