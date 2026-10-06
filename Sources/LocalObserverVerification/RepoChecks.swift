@@ -103,6 +103,18 @@ enum RepoChecks {
             }
             break
         }
+        if let spec = ProcessInfo.processInfo.environment["GH_REVIEW_PR"], let hash = spec.firstIndex(of: "#"),
+           let n = Int(spec[spec.index(after: hash)...]) {
+            let slug = String(spec[..<hash])
+            if let comments = ok("review comments \(spec)", GitHubAPI.reviewComments(slug, number: n)) {
+                let threads = GHReviewComment.threads(comments)
+                print("    \(comments.count) comments in \(threads.count) threads, \(comments.filter { $0.line == nil }.count) outdated")
+            }
+        }
+        if let branch = (try? GitHubAPI.branches(repo.slug, defaultBranch: base).get())?.first(where: { !$0.isDefault }),
+           let c = ok("compare \(base)...\(branch.name)", GitHubAPI.compare(repo.slug, base: base, head: branch.name)) {
+            print("    ahead \(c.aheadBy), \(c.files) files, title \"\(c.suggestedTitle(head: branch.name))\"")
+        }
         // CI: the most recently pushed repository that has workflow runs.
         for candidate in repos.prefix(15) {
             guard case .success(let runs) = GitHubAPI.runs(candidate.slug, perPage: 5), let run = runs.first else { continue }

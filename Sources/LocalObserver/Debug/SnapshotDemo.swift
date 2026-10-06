@@ -595,6 +595,12 @@ enum SnapshotDemo {
             GHNotification(id: "n4", repo: "acme/orbit-cli", title: "v2.4.0", kind: .release, reason: "subscribed", unread: true, updatedAt: ago(5 * hour)),
             GHNotification(id: "n5", repo: "acme/lumen-docs", title: "Dark mode for settings", kind: .pullRequest, reason: "mention", unread: false, updatedAt: ago(day), number: 41),
         ]
+        store.loadDemoReview(slug, 214, comments: [
+            GHReviewComment(id: 1, path: "search/handler.go", line: 44, author: "sam",
+                            bodyHTML: "<p>Should this use <code>tenant.Limits.Burst</code> instead of a fixed 1s retry?</p>", createdAt: ago(5 * hour)),
+            GHReviewComment(id: 2, path: "search/handler.go", line: 44, author: "dev",
+                            bodyHTML: "<p>Good catch, it now reads the bucket's reset time.</p>", createdAt: ago(4 * hour), replyTo: 1),
+        ])
         store.loadDemoInbox(notifications: notes, issues: [slug: issues], details: [issueDetail])
     }
 
