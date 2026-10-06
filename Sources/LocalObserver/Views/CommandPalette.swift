@@ -162,7 +162,7 @@ struct CommandPalette: View {
         ]
         items += ApprovalPalette.items(agentStore: agentStore)
         let pages: [SidebarItem] = [.home, .agentActivity, .agentUsage, .agentLimits, .repos, .inbox, .github, .ci, .pullRequests,
-                                    .all, .favorites, .launchers, .cleanup]
+                                    .all, .favorites, .launchers, .containers, .cleanup]
         items += pages.map { page in
             PaletteItem(id: "p:\(page.title)", group: .pages, title: page.title, symbol: page.symbol) { go(page) }
         }

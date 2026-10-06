@@ -126,6 +126,7 @@ struct LocalObserverVerification {
         ShelfChecks.run()
         RepoChecks.run()
         DiskChecks.run()
+        ServiceChecks.run()
         ReplayChecks.run()
         DiffChecks.run()
         AgentTaskChecks.run()

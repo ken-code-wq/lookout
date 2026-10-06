@@ -64,6 +64,8 @@ enum PortScanner {
             )
         }
 
+        ServicesCoordinator.tag(&entries)
+
         let probes = await probeAll(entries)
         for i in entries.indices {
             guard let p = probes[entries[i].id] else { continue }

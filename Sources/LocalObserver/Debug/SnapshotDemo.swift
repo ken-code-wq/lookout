@@ -5,6 +5,7 @@ import LocalObserverCore
 import LocalObserverRepos
 import LocalObserverDisk
 import LocalObserverHooks
+import LocalObserverServices
 
 /// Debug-only: `LOCAL_OBSERVER_SNAPSHOT_DEMO=1` makes the snapshot harness render made-up but plausible data
 /// (projects, sessions, a year of usage, plan limits, servers, audio) so screenshots never show this Mac's.
@@ -254,8 +255,12 @@ enum SnapshotDemo {
             server(48_812, "tidepool", "python3", "python3 -m uvicorn tidepool.app:app --port 8000", 8000, .python, .online,
                    title: "Tidepool", latency: 15, cpu: 0.9, mb: 98, uptime: 26 * 3600, branch: "chore/queue-v2",
                    worktree: "/Users/dev/.qoder/worktrees/app/9c1e7b/tidepool"),
-            server(612, "postgres", "postgres", "postgres -D /usr/local/var/postgresql@16", 5432, .other, .offline,
+            server(612, "Postgres", "postgres", "postgres -D /usr/local/var/postgresql@16", 5432, .database, .offline,
                    cpu: 0.1, mb: 64, uptime: 4 * 86_400),
+            ServerEntry(pid: 701, pgid: 701, processName: "com.docker.backend", command: "/Applications/Docker.app/Contents/MacOS/com.docker.backend",
+                        port: 6380, bindAddress: "*", workingDirectory: "/", projectRoot: "\(root)/aurora-api",
+                        projectName: "Redis · aurora", projectType: .database, httpState: .offline, cpu: 0.3, rssKB: 48 * 1024,
+                        uptime: 2 * 3600),
         ])
     }
 
@@ -585,6 +590,48 @@ enum SnapshotDemo {
                      safety: .keep, note: DiskKind.agentData.rebuildHint),
         ]
         store.loadDemo(volume: DiskVolume(name: "Macintosh HD", total: 494 * gb, available: 38 * gb), items: items)
+    }
+
+    // MARK: - Containers
+
+    static func loadServices(into store: ServicesStore) {
+        let now = Date()
+        func ago(_ s: TimeInterval) -> Date { now.addingTimeInterval(-s) }
+        func compose(_ project: String, _ service: String) -> [String: String] {
+            ["com.docker.compose.project": project, "com.docker.compose.service": service,
+             "com.docker.compose.project.working_dir": "\(root)/\(project == "aurora" ? "aurora-api" : project)"]
+        }
+        let containers = [
+            DockerContainer(id: "a1f0c2d9e8b7", name: "aurora-db-1", image: "postgres:16-alpine", state: .running, status: "Up 2 hours (healthy)",
+                            ports: [DockerPort(hostIP: "0.0.0.0", hostPort: 5433, containerPort: 5432)], labels: compose("aurora", "db"),
+                            createdAt: ago(9 * 86_400), uptime: 2 * 3600 + 610),
+            DockerContainer(id: "b2e1d3c4f5a6", name: "aurora-cache-1", image: "redis:7", state: .running, status: "Up 2 hours",
+                            ports: [DockerPort(hostIP: "0.0.0.0", hostPort: 6380, containerPort: 6379)], labels: compose("aurora", "cache"),
+                            createdAt: ago(9 * 86_400), uptime: 2 * 3600 + 604),
+            DockerContainer(id: "c3d2e4f5a6b7", name: "aurora-mail-1", image: "axllent/mailpit:latest", state: .running, status: "Up 2 hours",
+                            ports: [DockerPort(hostIP: "0.0.0.0", hostPort: 8025, containerPort: 8025),
+                                    DockerPort(hostIP: "0.0.0.0", hostPort: 1025, containerPort: 1025)],
+                            labels: compose("aurora", "mail"), createdAt: ago(9 * 86_400), uptime: 2 * 3600 + 600),
+            DockerContainer(id: "d4c3b2a1f0e9", name: "aurora-worker-1", image: "aurora-api-worker", state: .exited, status: "Exited (1) 14 minutes ago",
+                            labels: compose("aurora", "worker"), createdAt: ago(9 * 86_400)),
+            DockerContainer(id: "e5f6a7b8c9d0", name: "tidepool-mongo-1", image: "mongo:7", state: .exited, status: "Exited (0) 3 days ago",
+                            ports: [DockerPort(hostPort: nil, containerPort: 27017)], labels: compose("tidepool", "mongo"), createdAt: ago(30 * 86_400)),
+            DockerContainer(id: "f6a7b8c9d0e1", name: "minio", image: "minio/minio:latest", state: .running, status: "Up 3 days",
+                            ports: [DockerPort(hostIP: "127.0.0.1", hostPort: 9000, containerPort: 9000),
+                                    DockerPort(hostIP: "127.0.0.1", hostPort: 9001, containerPort: 9001)],
+                            createdAt: ago(40 * 86_400), uptime: 3 * 86_400 + 4_000),
+        ]
+        let inspected = [
+            "a1f0c2d9e8b7": DockerInspect(id: "a1f0c2d9e8b7", env: ["POSTGRES_USER": "aurora", "POSTGRES_PASSWORD": "demo-only-password", "POSTGRES_DB": "aurora_dev"]),
+            "b2e1d3c4f5a6": DockerInspect(id: "b2e1d3c4f5a6", env: [:], command: ["redis-server", "--requirepass", "demo-only"]),
+            "f6a7b8c9d0e1": DockerInspect(id: "f6a7b8c9d0e1", env: ["MINIO_ROOT_USER": "aurora"]),
+        ]
+        let logs = ["d4c3b2a1f0e9": [
+            DockerLogLine(time: ago(900), text: "worker: connecting to redis://cache:6379", isStderr: false),
+            DockerLogLine(time: ago(899), text: "Error: NOAUTH Authentication required.", isStderr: true),
+            DockerLogLine(time: ago(899), text: "    at RedisClient.connect (node_modules/redis/dist/index.js:412:11)", isStderr: true),
+        ]]
+        store.loadDemo(availability: .ready, containers: containers, inspected: inspected, logs: logs)
     }
 
     static func loadGitHub(into store: GitHubStore) {

@@ -53,6 +53,13 @@ let package = Package(
             dependencies: ["LocalObserverHooks"],
             path: "Sources/LookoutHook"
         ),
+        // Services: Docker containers and the databases, caches and queues behind local ports. Uses Disk only for
+        // its docker CLI lookup and process runner.
+        .target(
+            name: "LocalObserverServices",
+            dependencies: ["LocalObserverDisk"],
+            path: "Sources/LocalObserverServices"
+        ),
         // Widget views, shared by the extension and the app's debug snapshot harness.
         .target(
             name: "LocalObserverWidgetUI",
@@ -62,7 +69,7 @@ let package = Package(
         .executableTarget(
             name: "LocalObserver",
             dependencies: ["LocalObserverCore", "LocalObserverWidgetUI", "LocalObserverShelf", "LocalObserverRepos", "LocalObserverDisk",
-                           "LocalObserverHooks"],
+                           "LocalObserverHooks", "LocalObserverServices"],
             path: "Sources/LocalObserver"
         ),
         // WidgetKit extension. SwiftPM builds the executable; packaging/build-app.sh wraps it in an .appex.
@@ -81,7 +88,8 @@ let package = Package(
         ),
         .executableTarget(
             name: "LocalObserverVerification",
-            dependencies: ["LocalObserverCore", "LocalObserverShelf", "LocalObserverRepos", "LocalObserverDisk", "LocalObserverHooks"],
+            dependencies: ["LocalObserverCore", "LocalObserverShelf", "LocalObserverRepos", "LocalObserverDisk", "LocalObserverHooks",
+                           "LocalObserverServices"],
             path: "Sources/LocalObserverVerification"
         )
     ]
