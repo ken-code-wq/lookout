@@ -41,6 +41,10 @@ final class ApprovalCenter: ObservableObject {
     /// The agent's last message when its turn ended, by session id, for the quick-reply page.
     @Published private(set) var lastMessages: [String: String] = [:]
     @Published private(set) var replyStatus: String?
+    /// Sessions with a live reply waiter (`HookReply`): `AgentSession.id` → Claude Code's `session_id`.
+    @Published private(set) var replyTargets: [String: String] = [:]
+    /// Whether Claude Code's settings have Lookout's current hooks, for saying why a reply can't be sent.
+    @Published private(set) var claudeHookStatus: HookInstallStatus = .notConnected
     @Published private(set) var listenerError: String?
     @Published private(set) var isListening = false
     /// When each agent last sent a hook event, so Settings can show the connection is live.
@@ -54,6 +58,9 @@ final class ApprovalCenter: ObservableObject {
     @Published var passWhenTerminalFront: Bool { didSet { defaults.set(passWhenTerminalFront, forKey: Keys.passFront) } }
 
     static let waitChoices = [15, 45, 120, 300]
+    /// How long a finished session stays open to a reply from Lookout. Capped by the hook's own ceiling.
+    @Published var replyWaitHours: Int { didSet { defaults.set(replyWaitHours, forKey: Keys.replyWait); expireReplyWaiters() } }
+    static let replyWaitChoices = [1, 3, 8]
     static let notificationCategory = "lookout.approval"
 
     private let defaults = UserDefaults.standard
@@ -61,6 +68,7 @@ final class ApprovalCenter: ObservableObject {
         static let enabled = "LocalObserver.approvals.enabled"
         static let wait = "LocalObserver.approvals.waitSeconds"
         static let passFront = "LocalObserver.approvals.passWhenTerminalFront"
+        static let replyWait = "LocalObserver.approvals.replyWaitHours"
     }
 
     private weak var agentStore: AgentStore?
@@ -69,6 +77,10 @@ final class ApprovalCenter: ObservableObject {
     /// Events from sessions the last scan hadn't found yet (a session that just started). Retried after the next scan.
     private var unmatched: [HookEvent] = []
     private var expiryTasks: [String: Task<Void, Never>] = [:]
+    private var replyWaiters = ReplyWaiters<HookConnection>()
+    /// The Stop event each waiter registered with, by Claude session id, to match it to a running session.
+    private var waiterEvents: [String: HookEvent] = [:]
+    private var replySweep: Task<Void, Never>?
     private var cancellables: Set<AnyCancellable> = []
 
     private init() {
@@ -76,6 +88,8 @@ final class ApprovalCenter: ObservableObject {
         let wait = defaults.integer(forKey: Keys.wait)
         waitSeconds = Self.waitChoices.contains(wait) ? wait : 45
         passWhenTerminalFront = defaults.object(forKey: Keys.passFront) as? Bool ?? true
+        let hours = defaults.integer(forKey: Keys.replyWait)
+        replyWaitHours = Self.replyWaitChoices.contains(hours) ? hours : 3
     }
 
     /// Debug/demo only: show requests without a socket or a waiting agent.
@@ -94,6 +108,7 @@ final class ApprovalCenter: ObservableObject {
         NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)
             .sink { [weak self] _ in
                 self?.pending.forEach { $0.connection.reply(nil) }
+                self?.releaseAllReplyWaiters()
                 self?.server?.stop()
             }
             .store(in: &cancellables)
@@ -115,6 +130,21 @@ final class ApprovalCenter: ObservableObject {
             .sink { GlobalHotKeys.shared.register(.approvals, $0) }
             .store(in: &cancellables)
         registerNotificationActions()
+        refreshHookStatus()
+        NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+            .sink { [weak self] _ in self?.refreshHookStatus() }
+            .store(in: &cancellables)
+        // Waiters past the cap are released; once a minute is plenty for a cap measured in hours.
+        replySweep = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                self?.expireReplyWaiters()
+            }
+        }
+    }
+
+    func refreshHookStatus() {
+        claudeHookStatus = HookInstallation.status(.claude)
     }
 
     func startListening() {
@@ -144,6 +174,12 @@ final class ApprovalCenter: ObservableObject {
         guard let agent = AgentKind(rawValue: event.agent.rawValue) else { connection.reply(nil); return }
         lastEventAt[agent] = event.receivedAt
         let session = match(event, agent: agent)
+        if event.awaitsReply {
+            registerReplyWaiter(event, connection: connection)
+            return
+        }
+        // Typed in its own UI, or ended: nobody will reply from here, so the waiter exits quietly.
+        releaseReplyWaiters(for: event)
         if event.awaitsDecision {
             request(event, agent: agent, session: session, connection: connection)
         } else {
@@ -212,6 +248,7 @@ final class ApprovalCenter: ObservableObject {
             pushStates()
         }
         lastMessages = lastMessages.filter { running.contains($0.key) }
+        refreshReplyTargets()
         // Requests that arrived before their session was scanned.
         for index in pending.indices where pending[index].sessionID == nil {
             if let session = match(pending[index].event, agent: pending[index].agent) {
@@ -330,6 +367,63 @@ final class ApprovalCenter: ObservableObject {
         selectedID = pending[(index + delta + pending.count) % pending.count].id
     }
 
+    // MARK: Reply waiters
+
+    private func registerReplyWaiter(_ event: HookEvent, connection: HookConnection) {
+        let id = UUID().uuidString
+        let replaced = replyWaiters.register(id: id, sessionID: event.sessionID, handle: connection, at: event.receivedAt)
+        replaced?.reply(nil)
+        guard replyWaiters.has(event.sessionID) else { return }
+        waiterEvents[event.sessionID] = event
+        // Claude Code killed it, the user interrupted, or the session closed.
+        connection.watchForHangup(on: .main) { [id] in
+            Task { @MainActor in ApprovalCenter.shared.replyWaiterGone(id) }
+        }
+        refreshReplyTargets()
+    }
+
+    private func replyWaiterGone(_ id: String) {
+        replyWaiters.remove(id: id)
+        refreshReplyTargets()
+    }
+
+    private func releaseReplyWaiters(for event: HookEvent) {
+        let released = replyWaiters.release(for: event)
+        guard !released.isEmpty else { return }
+        released.forEach { $0.reply(nil) }
+        refreshReplyTargets()
+    }
+
+    private func expireReplyWaiters() {
+        let cap = TimeInterval(min(replyWaitHours * 3600, ClaudeHookConfig.replyWaitCeiling))
+        let expired = replyWaiters.expire(now: Date(), cap: cap)
+        guard !expired.isEmpty else { return }
+        expired.forEach { $0.reply(nil) }
+        refreshReplyTargets()
+    }
+
+    private func releaseAllReplyWaiters() {
+        _ = replyWaiters.expire(now: .distantFuture, cap: 0).map { $0.reply(nil) }
+        refreshReplyTargets()
+    }
+
+    private func refreshReplyTargets() {
+        waiterEvents = waiterEvents.filter { replyWaiters.has($0.key) }
+        var targets: [String: String] = [:]
+        for (sessionID, event) in waiterEvents {
+            if let session = match(event, agent: .claude) { targets[session.id] = sessionID }
+        }
+        if targets != replyTargets { replyTargets = targets }
+    }
+
+    /// How a reply would reach this session right now, or why it can't.
+    func replyRoute(for session: AgentSession) -> ReplyRoute {
+        let host = session.process?.host
+        let bundleID = host.flatMap { Bundle(path: $0.bundlePath)?.bundleIdentifier }
+        return ReplyRoute.choose(hasWaiter: replyTargets[session.id] != nil, isClaude: session.agent == .claude,
+                                 hookStatus: claudeHookStatus, hostBundleID: bundleID, tty: session.process?.terminal ?? "")
+    }
+
     // MARK: Quick reply
 
     func openReply(sessionID: String) {
@@ -345,6 +439,21 @@ final class ApprovalCenter: ObservableObject {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         replyStatus = nil
+        if let claudeSession = replyTargets[session.id], let waiter = replyWaiters.take(claudeSession) {
+            waiter.reply(HookReply.answer(trimmed))
+            refreshReplyTargets()
+            replyStatus = "Sent to Claude. It's working on it"
+            setState(.working, for: session.id, at: Date())
+            Task {
+                try? await Task.sleep(for: .seconds(1.6))
+                if notchPage == .reply(sessionID: session.id) { NotchController.shared.collapse() }
+            }
+            return
+        }
+        guard replyRoute(for: session) == .terminal else {
+            replyStatus = replyRoute(for: session).reason
+            return
+        }
         Task {
             let outcome = await TerminalReply.send(trimmed, to: session)
             switch outcome {
@@ -353,8 +462,8 @@ final class ApprovalCenter: ObservableObject {
                 setState(.working, for: session.id, at: Date())
                 try? await Task.sleep(for: .seconds(1.2))
                 if notchPage == .reply(sessionID: session.id) { NotchController.shared.collapse() }
-            case .copied(let host):
-                replyStatus = "Copied. Paste it in \(host) with ⌘V"
+            case .missing(let host):
+                replyStatus = "Couldn't find its tab in \(host)"
             case .failed(let reason):
                 replyStatus = reason
             }

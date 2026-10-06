@@ -259,27 +259,31 @@ struct NotchApprovalPill: View {
     }
 }
 
-/// Reply button on a "Your turn" row in the notch.
+/// Reply button on a "Your turn" row in the notch. Disabled, with the reason as its tooltip, when there's no way to
+/// deliver a reply to the session.
 struct NotchReplyButton: View {
+    @ObservedObject var center: ApprovalCenter = .shared
     var session: AgentSession
     @State private var hover = false
 
     var body: some View {
-        Button { ApprovalCenter.shared.openReply(sessionID: session.id) } label: {
+        let route = center.replyRoute(for: session)
+        Button { center.openReply(sessionID: session.id) } label: {
             Image(systemName: "arrowshape.turn.up.left.fill")
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(hover ? NotchColor.text : NotchColor.text2)
+                .foregroundStyle(route.canSend ? (hover ? NotchColor.text : NotchColor.text2) : NotchColor.text3)
                 .frame(width: 22, height: 22)
                 .background(Color.white.opacity(hover ? 0.16 : 0.08), in: Circle())
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .onHover { hover = $0 }
-        .help("Reply to \(session.agent.shortName)")
+        .disabled(!route.canSend)
+        .help(route.reason ?? "Reply to \(session.agent.shortName)")
     }
 }
 
-/// Quick reply at "Your turn": what the agent last said, and a line to send back to its terminal.
+/// Quick reply at "Your turn": what the agent last said, and a line to send back to the session.
 struct NotchReplyPage: View {
     @ObservedObject var center: ApprovalCenter
     @ObservedObject var agentStore: AgentStore
@@ -312,6 +316,7 @@ struct NotchReplyPage: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     Spacer(minLength: 0)
+                    let route = center.replyRoute(for: session)
                     HStack(spacing: 8) {
                         TextField("Type a reply and press Return", text: $text)
                             .textFieldStyle(.plain)
@@ -323,9 +328,10 @@ struct NotchReplyPage: View {
                             .frame(height: 28)
                             .background(Color.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                         NotchAnswerButton(title: "Send", key: nil, style: .primary) { send(session) }
-                            .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
+                            .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty || !route.canSend)
                     }
-                    Text(center.replyStatus ?? hint(session))
+                    .disabled(!route.canSend)
+                    Text(center.replyStatus ?? hint(session, route))
                         .font(.system(size: 10.5)).foregroundStyle(NotchColor.text3).lineLimit(1)
                 }
             } else {
@@ -337,16 +343,17 @@ struct NotchReplyPage: View {
     }
 
     private func send(_ session: AgentSession) {
+        guard center.replyRoute(for: session).canSend else { return }
         center.sendReply(text, to: session)
         text = ""
     }
 
-    private func hint(_ session: AgentSession) -> String {
-        let bundle = session.process?.host.flatMap { Bundle(path: $0.bundlePath)?.bundleIdentifier }
-        if bundle == TerminalScript.iTermBundleID || bundle == TerminalScript.terminalBundleID {
-            return "Typed straight into its \(session.process?.host?.name ?? "terminal") tab"
+    private func hint(_ session: AgentSession, _ route: ReplyRoute) -> String {
+        switch route {
+        case .hook: return "Goes straight to Claude in this session, wherever it runs"
+        case .terminal: return "Typed straight into its \(session.process?.host?.name ?? "terminal") tab"
+        case .unavailable(let reason): return reason
         }
-        return "Copied to the clipboard, then \(session.process?.host?.name ?? "its app") is brought forward to paste"
     }
 }
 
@@ -439,11 +446,14 @@ enum ApprovalPalette {
                                      subtitle: [first.event.preview?.title ?? first.event.toolName, first.projectName].joined(separator: " · "),
                                      symbol: "hand.raised", keywords: "approve allow deny permission") { center.openOldest() })
         }
-        let yourTurn = agentStore.runningSessions.filter { AgentActivityBucket($0) == .yourTurn && $0.process?.host != nil }
+        let yourTurn = agentStore.runningSessions.filter { AgentActivityBucket($0) == .yourTurn && $0.process != nil }
         items += yourTurn.prefix(6).map { session in
-            PaletteItem(id: "reply:\(session.id)", group: .actions, title: "Reply to \(session.agent.shortName): \(session.title)",
-                        subtitle: session.projectName, symbol: "arrowshape.turn.up.left", keywords: "reply answer message your turn") {
-                if NotchController.shared.isAvailable {
+            let route = center.replyRoute(for: session)
+            // No way to deliver: say why, and go to the session instead.
+            let subtitle = [session.projectName, route.reason ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
+            return PaletteItem(id: "reply:\(session.id)", group: .actions, title: "Reply to \(session.agent.shortName): \(session.title)",
+                               subtitle: subtitle, symbol: "arrowshape.turn.up.left", keywords: "reply answer message your turn") {
+                if route.canSend, NotchController.shared.isAvailable {
                     center.openReply(sessionID: session.id)
                 } else {
                     AgentActions.jump(to: session)

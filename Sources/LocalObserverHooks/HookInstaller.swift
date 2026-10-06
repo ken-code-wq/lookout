@@ -43,25 +43,41 @@ public enum HookHelper {
 public enum ClaudeHookConfig {
     /// Event, matcher, timeout in seconds. PermissionRequest blocks the agent while Lookout waits for an answer, so
     /// its timeout is Claude Code's maximum; Lookout gives up well before that (Settings › Agents).
-    public static let events: [(name: String, matcher: String?, timeout: Int)] = [
-        ("PermissionRequest", "*", 600),
-        ("Notification", nil, 10),
-        ("UserPromptSubmit", nil, 10),
-        ("Stop", nil, 10),
-        ("SessionStart", nil, 10),
-        ("SessionEnd", nil, 10),
+    ///
+    /// The second Stop entry is the reply waiter (`HookReply`): `asyncRewake` runs it in the background and wakes
+    /// Claude when it exits 2. Its timeout is a ceiling; the app releases it sooner (Settings › Agents).
+    public static let events: [(name: String, matcher: String?, timeout: Int, awaitsReply: Bool)] = [
+        ("PermissionRequest", "*", 600, false),
+        ("Notification", nil, 10, false),
+        ("UserPromptSubmit", nil, 10, false),
+        ("Stop", nil, 10, false),
+        ("Stop", nil, replyWaitCeiling, true),
+        ("SessionStart", nil, 10, false),
+        ("SessionEnd", nil, 10, false),
     ]
 
+    /// The longest a reply waiter may live, in seconds; the helper enforces the same ceiling itself.
+    public static let replyWaitCeiling = 8 * 3600
+
+    /// The command an entry runs: the helper, plus `--await-reply` for the waiter.
+    public static func command(_ base: String, awaitsReply: Bool) -> String {
+        awaitsReply ? base + " " + HookReply.awaitFlag : base
+    }
+
+    /// Connected when every event has exactly Lookout's current entries. An install from before the reply waiter
+    /// (one Stop entry) reads as outdated, so Settings offers to update it.
     public static func status(_ settings: [String: Any], command: String) -> HookInstallStatus {
         let hooks = settings["hooks"] as? [String: Any] ?? [:]
+        let names = Set(events.map(\.name))
         var found = 0, exact = 0
-        for event in events {
-            let commands = ourCommands(in: hooks[event.name])
+        for name in names {
+            let commands = ourCommands(in: hooks[name])
             found += commands.count
-            if commands == [command] { exact += 1 }
+            let expected = events.filter { $0.name == name }.map { Self.command(command, awaitsReply: $0.awaitsReply) }
+            if commands.sorted() == expected.sorted() { exact += 1 }
         }
         if found == 0 { return .notConnected }
-        return exact == events.count && found == events.count ? .connected : .outdated
+        return exact == names.count ? .connected : .outdated
     }
 
     /// Idempotent: any earlier Lookout entries are replaced, so installing twice leaves one set.
@@ -70,7 +86,9 @@ public enum ClaudeHookConfig {
         var hooks = result["hooks"] as? [String: Any] ?? [:]
         for event in events {
             var groups = hooks[event.name] as? [Any] ?? []
-            var group: [String: Any] = ["hooks": [["type": "command", "command": command, "timeout": event.timeout]]]
+            var hook: [String: Any] = ["type": "command", "command": Self.command(command, awaitsReply: event.awaitsReply), "timeout": event.timeout]
+            if event.awaitsReply { hook["asyncRewake"] = true }
+            var group: [String: Any] = ["hooks": [hook]]
             if let matcher = event.matcher { group["matcher"] = matcher }
             groups.append(group)
             hooks[event.name] = groups

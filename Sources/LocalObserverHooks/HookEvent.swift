@@ -42,11 +42,13 @@ public struct HookEvent: Hashable, Sendable {
     public var suggestions: Data?
     /// The helper's parent processes, nearest first: the shell the hook runs in, then the agent itself.
     public var pids: [Int32]
+    /// Sent by `lookout-hook --await-reply`: a reply waiter registering, not a new event (see `HookReply`).
+    public var awaitsReply: Bool
     public var receivedAt: Date
 
     public init(agent: HookAgent, kind: Kind, sessionID: String = "", cwd: String = "", transcriptPath: String = "",
                 toolName: String = "", preview: HookToolPreview? = nil, message: String = "", suggestions: Data? = nil,
-                pids: [Int32] = [], receivedAt: Date = Date()) {
+                pids: [Int32] = [], awaitsReply: Bool = false, receivedAt: Date = Date()) {
         self.agent = agent
         self.kind = kind
         self.sessionID = sessionID
@@ -57,6 +59,7 @@ public struct HookEvent: Hashable, Sendable {
         self.message = message
         self.suggestions = suggestions
         self.pids = pids
+        self.awaitsReply = awaitsReply
         self.receivedAt = receivedAt
     }
 
@@ -83,13 +86,16 @@ public struct HookEvent: Hashable, Sendable {
 
     // MARK: Parsing
 
-    /// Parses one envelope line: `{"v":1,"agent":"claude","pids":[…],"payload":{…}}`.
+    /// Parses one envelope line: `{"v":1,"agent":"claude","pids":[…],"payload":{…}}`, plus `"await":"reply"` from a
+    /// reply waiter.
     public static func parse(envelope data: Data, now: Date = Date()) -> HookEvent? {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let agent = (object["agent"] as? String).flatMap(HookAgent.init(rawValue:)),
               let payload = object["payload"] as? [String: Any] else { return nil }
         let pids = (object["pids"] as? [Any] ?? []).compactMap { ($0 as? NSNumber)?.int32Value }
-        return parse(agent: agent, payload: payload, pids: pids, now: now)
+        var event = parse(agent: agent, payload: payload, pids: pids, now: now)
+        event?.awaitsReply = agent == .claude && object["await"] as? String == "reply"
+        return event
     }
 
     public static func parse(agent: HookAgent, payload: [String: Any], pids: [Int32] = [], now: Date = Date()) -> HookEvent? {
@@ -142,8 +148,9 @@ public struct HookEvent: Hashable, Sendable {
     }
 
     /// The line `lookout-hook` sends: the hook's own JSON wrapped with who sent it. One line, no trailing newline.
-    public static func envelope(agent: HookAgent, payload: Any, pids: [Int32]) -> Data? {
-        let object: [String: Any] = ["v": 1, "agent": agent.rawValue, "pids": pids.map(Int.init), "payload": payload]
+    public static func envelope(agent: HookAgent, payload: Any, pids: [Int32], awaitingReply: Bool = false) -> Data? {
+        var object: [String: Any] = ["v": 1, "agent": agent.rawValue, "pids": pids.map(Int.init), "payload": payload]
+        if awaitingReply { object["await"] = "reply" }
         guard JSONSerialization.isValidJSONObject(object) else { return nil }
         return try? JSONSerialization.data(withJSONObject: object)
     }

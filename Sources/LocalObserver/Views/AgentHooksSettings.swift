@@ -44,6 +44,13 @@ struct AgentHooksSettings: View {
                     Toggle("Not while its terminal is in front", isOn: $center.passWhenTerminalFront).toggleStyle(.switch).labelsHidden()
                 }
                 .disabled(!center.enabled)
+                SettingsDivider()
+                SettingsRow(title: "Keep replies open for", detail: "After Claude finishes a turn, how long you can still reply from the notch. Typing in its own window closes it sooner") {
+                    Picker("Keep replies open for", selection: $center.replyWaitHours) {
+                        ForEach(ApprovalCenter.replyWaitChoices, id: \.self) { Text($0 == 1 ? "1 hour" : "\($0) hours").tag($0) }
+                    }
+                    .labelsHidden().fixedSize()
+                }
             }
             Text(listenerText)
                 .font(NFont.caption).foregroundStyle(N.text3).padding(.top, 6).fixedSize(horizontal: false, vertical: true)
@@ -76,7 +83,7 @@ struct AgentHooksSettings: View {
                     Button("Disconnect") { run(agent, connect: false) }
                 case .outdated:
                     Button("Disconnect") { run(agent, connect: false) }
-                    Button("Update") { run(agent, connect: true) }.buttonStyle(.borderedProminent).disabled(!canConnect)
+                    Button("Reconnect hooks") { run(agent, connect: true) }.buttonStyle(.borderedProminent).disabled(!canConnect)
                 case .notConnected:
                     Button("Connect hooks") { run(agent, connect: true) }.buttonStyle(.borderedProminent).disabled(!canConnect)
                 case .conflict, .unreadable:
@@ -106,7 +113,7 @@ struct AgentHooksSettings: View {
         case .unreadable(let reason):
             return reason
         case .outdated:
-            return "Lookout's hooks point at another copy of the helper, or some are missing. Update them to use this copy."
+            return "Lookout's hooks point at another copy of the helper, or some are missing (replies from the notch need the newest set). Reconnect to bring them up to date."
         default:
             break
         }
@@ -114,7 +121,7 @@ struct AgentHooksSettings: View {
         let heard = last.map { " Last event \(AgentFormat.relative($0))." } ?? ""
         switch agent {
         case .claude:
-            return "Sessions, prompts, finished turns and permission requests. Answer Allow, Deny or Always allow from the notch." + heard
+            return "Sessions, prompts, finished turns and permission requests. Answer Allow, Deny or Always allow from the notch, and reply when it's your turn, in any app Claude runs in." + heard
         case .codex:
             return "Finished turns only: Codex has no hook for approvals, so it still asks in its terminal." + heard
         }
@@ -149,5 +156,6 @@ struct AgentHooksSettings: View {
         var updated: [HookAgent: HookInstallStatus] = [:]
         for agent in HookAgent.allCases { updated[agent] = HookInstallation.status(agent) }
         statuses = updated
+        center.refreshHookStatus()
     }
 }

@@ -2,12 +2,13 @@ import AppKit
 import LocalObserverCore
 import LocalObserverHooks
 
-/// Sends a quick reply to the terminal a session runs in. iTerm2 and Terminal take it directly by AppleScript; any
-/// other host gets it on the clipboard, brought to the front so ⌘V finishes the job.
+/// Types a quick reply into the iTerm2 or Terminal tab a session runs in, by AppleScript. The secondary route: a
+/// session with a reply waiter gets the reply through Claude Code's hook instead (`ApprovalCenter.sendReply`).
 enum TerminalReply {
     enum Outcome: Equatable {
         case typed(String)
-        case copied(String)
+        /// The host has no tab on the session's TTY any more.
+        case missing(String)
         case failed(String)
     }
 
@@ -19,29 +20,20 @@ enum TerminalReply {
         let bundleID = Bundle(path: host.bundlePath)?.bundleIdentifier
             ?? NSRunningApplication(processIdentifier: host.pid)?.bundleIdentifier
         let tty = "/dev/\(process.terminal)"
-        if !process.terminal.isEmpty, process.terminal != "??",
-           let script = TerminalScript.reply(text, tty: tty, bundleID: bundleID) {
-            let result = await Task.detached(priority: .userInitiated) { () -> (String?, Int?) in
-                var error: NSDictionary?
-                let output = NSAppleScript(source: script)?.executeAndReturnError(&error).stringValue
-                return (output, error?[NSAppleScript.errorNumber] as? Int)
-            }.value
-            if result.0 == "ok" { return .typed(host.name) }
-            // -1743: not allowed to control the terminal. Fall through to the clipboard and say why.
-            if result.1 == -1743 {
-                copyAndFocus(text, session: session)
-                return .failed("Allow Lookout to control \(host.name) in System Settings › Privacy & Security › Automation. Copied the reply instead.")
-            }
+        guard !process.terminal.isEmpty, process.terminal != "??",
+              let script = TerminalScript.reply(text, tty: tty, bundleID: bundleID) else {
+            return .failed("\(host.name) can't take a typed reply.")
         }
-        copyAndFocus(text, session: session)
-        return .copied(host.name)
-    }
-
-    @MainActor
-    private static func copyAndFocus(_ text: String, session: AgentSession) {
-        let board = NSPasteboard.general
-        board.clearContents()
-        board.setString(TerminalScript.singleLine(text), forType: .string)
-        AgentActions.jump(to: session)
+        let result = await Task.detached(priority: .userInitiated) { () -> (String?, Int?) in
+            var error: NSDictionary?
+            let output = NSAppleScript(source: script)?.executeAndReturnError(&error).stringValue
+            return (output, error?[NSAppleScript.errorNumber] as? Int)
+        }.value
+        if result.0 == "ok" { return .typed(host.name) }
+        // -1743: not allowed to control the terminal.
+        if result.1 == -1743 {
+            return .failed("Allow Lookout to control \(host.name) in System Settings › Privacy & Security › Automation.")
+        }
+        return .missing(host.name)
     }
 }

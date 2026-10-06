@@ -14,6 +14,7 @@ enum HookChecks {
         checkOverlay()
         checkTerminalScript()
         checkSocket()
+        checkReplies()
     }
 
     private static func event(_ json: String, pids: [Int32] = []) -> HookEvent {
@@ -100,7 +101,7 @@ enum HookChecks {
         precondition(ClaudeHookConfig.status(installed, command: command) == .connected, "Installed settings are connected")
         precondition(installed["model"] as? String == "opus" && (installed["permissions"] as? [String: Any]) != nil, "Other settings untouched")
         let hooks = installed["hooks"] as! [String: Any]
-        precondition((hooks["Stop"] as! [Any]).count == 2 && (hooks["PreToolUse"] as! [Any]).count == 1, "Other hooks kept alongside Lookout's")
+        precondition((hooks["Stop"] as! [Any]).count == 3 && (hooks["PreToolUse"] as! [Any]).count == 1, "Other hooks kept alongside Lookout's")
         let permission = (hooks["PermissionRequest"] as! [[String: Any]])[0]
         precondition(permission["matcher"] as? String == "*", "Permission requests for every tool")
         precondition(NSDictionary(dictionary: ClaudeHookConfig.install(installed, command: command)).isEqual(to: installed), "Installing twice changes nothing")
@@ -201,5 +202,84 @@ enum HookChecks {
         do { try second.start(); preconditionFailure("A second listener must not steal the socket") } catch {
             precondition(error as? HookSocket.Failure == .inUse, "Second listener reports the socket in use")
         }
+    }
+
+    /// Replies through Claude Code's asyncRewake Stop hook: the installer's waiter entry, the app's bookkeeping, what
+    /// the helper prints and exits with, the route a reply takes, and a waiter answered over a real socket.
+    private static func checkReplies() {
+        let command = HookHelper.command(helperPath: "/Applications/Lookout.app/Contents/MacOS/lookout-hook", agent: .claude)
+        let installed = ClaudeHookConfig.install([:], command: command)
+        let stops = (installed["hooks"] as! [String: Any])["Stop"] as! [[String: Any]]
+        let waiter = stops.compactMap { ($0["hooks"] as? [[String: Any]])?.first }
+            .first { ($0["command"] as? String)?.hasSuffix(" --await-reply") == true }
+        precondition(waiter?["asyncRewake"] as? Bool == true && waiter?["command"] as? String == command + " --await-reply"
+                     && waiter?["timeout"] as? Int == ClaudeHookConfig.replyWaitCeiling, "Stop gets an asyncRewake reply waiter")
+        precondition(stops.count == 2 && ClaudeHookConfig.status(installed, command: command) == .connected, "Waiter install reads as connected")
+        // An install from before replies: one Stop entry, no waiter.
+        var old = installed
+        var oldHooks = old["hooks"] as! [String: Any]
+        oldHooks["Stop"] = [["hooks": [["type": "command", "command": command, "timeout": 10]]]]
+        old["hooks"] = oldHooks
+        precondition(ClaudeHookConfig.status(old, command: command) == .outdated, "An install without the waiter reads as outdated")
+        precondition(NSDictionary(dictionary: ClaudeHookConfig.install(old, command: command)).isEqual(to: installed), "Reconnecting adds the waiter, once")
+        precondition(ClaudeHookConfig.uninstall(installed).isEmpty, "Disconnecting removes the waiter too")
+
+        // Envelope: a waiter registering isn't a new event.
+        let payload: [String: Any] = ["session_id": "s1", "hook_event_name": "Stop", "last_assistant_message": "Done."]
+        let line = HookEvent.envelope(agent: .claude, payload: payload, pids: [], awaitingReply: true)!
+        precondition(HookEvent.parse(envelope: line)?.awaitsReply == true, "Waiter envelope parses as awaiting a reply")
+        precondition(event(#"{"session_id":"s1","hook_event_name":"Stop"}"#).awaitsReply == false, "A plain Stop isn't a waiter")
+
+        // Helper output: a reply wakes Claude with the message on stderr; anything else exits 0 silently.
+        let woke = HookReply.outcome(of: HookReply.answer("  run the tests  "))
+        precondition(woke.exitCode == 2 && woke.stderr?.hasSuffix("\n\nrun the tests") == true, "A reply exits 2 with the message")
+        let released = HookReply.outcome(of: nil)
+        precondition(released.exitCode == 0 && released.stderr == nil, "A release exits 0 with nothing")
+        precondition(HookReply.outcome(of: Data("{}".utf8)).exitCode == 0 && HookReply.outcome(of: Data("junk".utf8)).exitCode == 0,
+                     "Anything but a reply exits 0")
+        precondition(HookReply.answer("  \n ") == nil, "An empty reply isn't sent")
+
+        // Bookkeeping.
+        var book = ReplyWaiters<String>()
+        let t0 = Date(timeIntervalSince1970: 1_000)
+        precondition(book.register(id: "a", sessionID: "s1", handle: "A", at: t0) == nil && book.has("s1"), "Waiter registers")
+        precondition(book.register(id: "b", sessionID: "s1", handle: "B", at: t0) == "A", "A newer waiter replaces the older, which is released")
+        book.remove(id: "a")
+        precondition(book.has("s1"), "The old waiter hanging up doesn't drop the new one")
+        precondition(book.release(for: event(#"{"session_id":"s1","hook_event_name":"Stop"}"#)).isEmpty, "A Stop doesn't release")
+        precondition(book.release(for: event(#"{"session_id":"s1","hook_event_name":"UserPromptSubmit"}"#)) == ["B"] && !book.has("s1"),
+                     "Typing in its own UI releases the waiter")
+        _ = book.register(id: "c", sessionID: "s2", handle: "C", at: t0)
+        precondition(book.release(for: event(#"{"session_id":"s2","hook_event_name":"SessionEnd"}"#)) == ["C"], "Session end releases")
+        _ = book.register(id: "d", sessionID: "s3", handle: "D", at: t0)
+        _ = book.register(id: "e", sessionID: "s4", handle: "E", at: t0.addingTimeInterval(3000))
+        precondition(book.expire(now: t0.addingTimeInterval(3600), cap: 3600) == ["D"] && book.has("s4"), "Only waiters past the cap expire")
+        precondition(book.take("s4") == "E" && book.take("s4") == nil, "One reply per wait")
+        precondition(book.register(id: "f", sessionID: "", handle: "F", at: t0) == "F" && book.waiters.isEmpty, "No session id, no waiter")
+
+        // Routes.
+        let iTerm = TerminalScript.iTermBundleID, code = "com.microsoft.VSCodeInsiders"
+        precondition(ReplyRoute.choose(hasWaiter: true, isClaude: true, hookStatus: .connected, hostBundleID: code, tty: "??") == .hook,
+                     "A waiter delivers whatever the host")
+        precondition(ReplyRoute.choose(hasWaiter: false, isClaude: true, hookStatus: .outdated, hostBundleID: iTerm, tty: "ttys003") == .terminal,
+                     "iTerm2 without a waiter is typed into")
+        precondition(ReplyRoute.choose(hasWaiter: false, isClaude: true, hookStatus: .outdated, hostBundleID: code, tty: "ttys003")
+                     == .unavailable("Reconnect hooks to reply to this session"), "Outdated hooks say reconnect")
+        precondition(!ReplyRoute.choose(hasWaiter: false, isClaude: false, hookStatus: .connected, hostBundleID: code, tty: "").canSend,
+                     "Codex in an editor can't be replied to")
+        precondition(ReplyRoute.choose(hasWaiter: false, isClaude: true, hookStatus: .notConnected, hostBundleID: nil, tty: "").reason
+                     == "Replies need Claude Code hooks", "Unconnected hooks say so")
+
+        // A real socket: one waiter answered, one released.
+        let path = "/tmp/lookout-reply-check-\(getpid()).sock"
+        let server = HookServer(path: path) { line, connection in
+            guard let event = HookEvent.parse(envelope: line), event.awaitsReply else { connection.reply(nil); return }
+            connection.reply(event.sessionID == "s1" ? HookReply.answer("ship it") : nil)
+        }
+        do { try server.start() } catch { preconditionFailure("Hook server didn't start: \(error)") }
+        defer { server.stop() }
+        precondition(HookReply.outcome(of: HookClient.send(line, to: path, wait: 5)).exitCode == 2, "An answered waiter wakes Claude")
+        let other = HookEvent.envelope(agent: .claude, payload: ["session_id": "s2", "hook_event_name": "Stop"], pids: [], awaitingReply: true)!
+        precondition(HookReply.outcome(of: HookClient.send(other, to: path, wait: 5)).exitCode == 0, "A released waiter exits quietly")
     }
 }
