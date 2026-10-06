@@ -329,6 +329,57 @@ enum SnapshotDemo {
         store.loadDemo(repos: repos, pulls: pulls, login: "dev")
     }
 
+    static func loadCI(into store: CIStore) {
+        let now = Date()
+        func ago(_ m: Double) -> Date { now.addingTimeInterval(-m * 60) }
+        let runs = [
+            GHRun(id: 9001, repo: "acme/aurora-api", workflow: "CI", title: "Token bucket per tenant", status: .running,
+                  branch: "feat/search-rate-limit", sha: "f00d001aa", actor: "dev", number: 412, createdAt: ago(4), startedAt: ago(4)),
+            GHRun(id: 9002, repo: "acme/pixel-garden", workflow: "Tests", title: "Retry token refresh once before failing", status: .failure,
+                  branch: "fix/flaky-auth", sha: "c0ffee1", actor: "dev", number: 88, createdAt: ago(26), startedAt: ago(26), updatedAt: ago(19)),
+            GHRun(id: 9003, repo: "acme/tidepool", workflow: "CI", title: "Migrate jobs to the new queue", status: .success,
+                  branch: "chore/queue-v2", sha: "abc1234", actor: "dev", number: 57, createdAt: ago(130), startedAt: ago(130), updatedAt: ago(122)),
+            GHRun(id: 9004, repo: "acme/aurora-api", workflow: "Deploy", title: "Cache search results per tenant", status: .success,
+                  branch: "main", sha: "a1b2c3d", actor: "dev", number: 211, createdAt: ago(300), startedAt: ago(300), updatedAt: ago(294)),
+            GHRun(id: 9005, repo: "acme/lumen-docs", workflow: "Lint", title: "Settings page follows the system appearance", status: .cancelled,
+                  branch: "feat/dark-settings", actor: "dev", number: 41, createdAt: ago(360), startedAt: ago(360), updatedAt: ago(358)),
+        ]
+        let jobs = [9002: [
+            GHJob(id: 7001, name: "unit (node 20)", status: .failure, startedAt: ago(26), completedAt: ago(19), steps: [
+                GHStep(number: 1, name: "Set up job", status: .success), GHStep(number: 2, name: "Install dependencies", status: .success),
+                GHStep(number: 3, name: "Run tests", status: .failure), GHStep(number: 4, name: "Upload coverage", status: .skipped)]),
+            GHJob(id: 7002, name: "lint", status: .success, startedAt: ago(26), completedAt: ago(24), steps: [
+                GHStep(number: 1, name: "Set up job", status: .success), GHStep(number: 2, name: "eslint", status: .success)]),
+        ]]
+        let log = """
+        2026-10-06T10:00:01.0000000Z ##[group]Run npm test -- --ci
+        2026-10-06T10:00:01.1000000Z [command]/usr/local/bin/npm test -- --ci
+        2026-10-06T10:00:04.0000000Z PASS src/garden/grow.test.ts
+        2026-10-06T10:00:05.0000000Z PASS src/garden/water.test.ts
+        2026-10-06T10:00:07.0000000Z FAIL src/auth/refresh.test.ts
+        2026-10-06T10:00:07.1000000Z   ● token refresh › retries once before failing
+        2026-10-06T10:00:07.2000000Z     expect(received).toBe(expected)
+        2026-10-06T10:00:07.3000000Z     Expected: 2
+        2026-10-06T10:00:07.4000000Z     Received: 1
+        2026-10-06T10:00:07.5000000Z       at Object.<anonymous> (src/auth/refresh.test.ts:42:27)
+        2026-10-06T10:00:08.0000000Z Tests:       1 failed, 63 passed, 64 total
+        2026-10-06T10:00:08.1000000Z ##[endgroup]
+        2026-10-06T10:00:08.2000000Z ##[error]Process completed with exit code 1.
+        """
+        let deploys = [
+            GHDeployment(id: "d1", repo: "acme/aurora-api", environment: "Production", state: .success, sha: "a1b2c3d4", creator: "vercel[bot]",
+                         createdAt: ago(290), url: "https://aurora-api.vercel.app"),
+            GHDeployment(id: "d2", repo: "acme/aurora-api", environment: "Preview", state: .inProgress, sha: "f00d001a", branch: "feat/search-rate-limit",
+                         creator: "vercel[bot]", createdAt: ago(3), url: "https://aurora-api-git-feat-search-rate-limit-acme.vercel.app"),
+            GHDeployment(id: "d3", repo: "acme/lumen-docs", environment: "Production", state: .success, sha: "e1e1e1e1", creator: "netlify[bot]",
+                         createdAt: ago(600), url: "https://lumen-docs.netlify.app"),
+            GHDeployment(id: "d4", repo: "acme/pixel-garden", environment: "Preview", state: .failure, sha: "c0ffee12", creator: "vercel[bot]",
+                         createdAt: ago(25), url: nil),
+        ]
+        store.loadDemo(runs: runs, deployments: deploys, jobs: jobs, logs: [7001: GHLogLine.parse(log)])
+        store.selectedRun = 9002
+    }
+
     static func loadDisk(into store: DiskStore) {
         let now = Date()
         func ago(_ d: Double) -> Date { now.addingTimeInterval(-d * 86_400) }

@@ -1,5 +1,6 @@
 import Foundation
 import LocalObserverCore
+import LocalObserverRepos
 
 /// Session replay: tool calls pair with their results, edits become diffs, refused edits and plumbing are dropped.
 enum ReplayChecks {
@@ -8,6 +9,7 @@ enum ReplayChecks {
         checkClaude()
         checkDiff()
         checkBudgets()
+        checkLogParsing()
     }
 
     /// `REPLAY_PROBE=/path/to/transcript.jsonl`: what a replay of a real session contains.
@@ -76,6 +78,24 @@ enum ReplayChecks {
         let p = spend[.claude]!.progress(AgentBudget(daily: 10, weekly: 8))!
         precondition(p.period == "this week" && abs(p.fraction - 6.5 / 8) < 0.0001, "Progress takes the tighter cap")
         precondition(AgentSpend().progress(AgentBudget()) == nil, "No caps, no progress")
+    }
+
+    private static func checkLogParsing() {
+        let log = """
+        2026-10-06T10:00:01.1234567Z ##[group]Run npm test
+        2026-10-06T10:00:01.2234567Z [command]/usr/bin/npm test
+        2026-10-06T10:00:02.0000000Z \u{1B}[32mPASS\u{1B}[0m src/a.test.ts
+        2026-10-06T10:00:02.1000000Z Retrying on error is configured
+        2026-10-06T10:00:03.0000000Z src/b.ts(3,1): error TS2322: Type 'string' is not assignable
+        2026-10-06T10:00:04.0000000Z ##[endgroup]
+        2026-10-06T10:00:05.0000000Z ##[error]Process completed with exit code 1.
+        """
+        let lines = GHLogLine.parse(log)
+        precondition(lines.map(\.kind) == [.group, .command, .plain, .plain, .error, .error], "Log kinds: \(lines.map(\.kind))")
+        precondition(lines[0].text == "Run npm test" && lines[2].text == "PASS src/a.test.ts", "Timestamps and colours stripped")
+        precondition(GHLogLine.excerpt(lines, context: 1).hasPrefix("Retrying"), "Excerpt starts just before the first error")
+        precondition(GHRunStatus(status: "completed", conclusion: "timed_out") == .failure
+                     && GHRunStatus(status: "in_progress", conclusion: nil) == .running, "Run status mapping")
     }
 
     private static func checkDiff() {

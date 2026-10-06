@@ -14,6 +14,7 @@ enum SidebarItem: Hashable {
     case agentLimits
     case repos
     case github
+    case ci
     case pullRequests
     case group(TypeGroup)
     case shelf
@@ -34,6 +35,7 @@ enum SidebarItem: Hashable {
         case .agentLimits: return "Plan limits"
         case .repos: return "Repositories"
         case .github: return "GitHub"
+        case .ci: return "CI & Deploys"
         case .pullRequests: return "Pull requests"
         case .group(let g): return g.rawValue
         }
@@ -53,6 +55,7 @@ enum SidebarItem: Hashable {
         case .agentLimits: return "gauge.with.dots.needle.33percent"
         case .repos: return "square.stack.3d.up"
         case .github: return "chevron.left.forwardslash.chevron.right"
+        case .ci: return "bolt.horizontal.circle"
         case .pullRequests: return "arrow.triangle.pull"
         case .group(let g): return g.symbol
         }
@@ -75,7 +78,7 @@ enum SidebarItem: Hashable {
 
     var isShelfPage: Bool { self == .shelf || self == .clipboard }
 
-    var isRepoPage: Bool { self == .repos || self == .github || self == .pullRequests }
+    var isRepoPage: Bool { self == .repos || self == .github || self == .ci || self == .pullRequests }
 }
 
 enum ViewMode: String, CaseIterable, Identifiable {
@@ -302,7 +305,7 @@ final class AppState: ObservableObject {
     var filtered: [ServerEntry] {
         var list = visibleServers
         switch sidebar {
-        case .all, .launchers, .agentActivity, .agentUsage, .agentLimits, .home, .shelf, .clipboard, .repos, .github, .pullRequests, .cleanup: break
+        case .all, .launchers, .agentActivity, .agentUsage, .agentLimits, .home, .shelf, .clipboard, .repos, .github, .ci, .pullRequests, .cleanup: break
         case .favorites: list = list.filter { favorites.contains($0.port) }
         case .group(let g): list = list.filter { $0.projectType.group == g }
         }
@@ -353,7 +356,7 @@ final class AppState: ObservableObject {
         case .all: return visibleServers.count
         case .favorites: return visibleServers.filter { favorites.contains($0.port) }.count
         case .launchers: return managed.count
-        case .agentActivity, .agentUsage, .agentLimits, .home, .shelf, .clipboard, .repos, .github, .pullRequests, .cleanup: return 0
+        case .agentActivity, .agentUsage, .agentLimits, .home, .shelf, .clipboard, .repos, .github, .ci, .pullRequests, .cleanup: return 0
         case .group(let g): return visibleServers.filter { $0.projectType.group == g }.count
         }
     }

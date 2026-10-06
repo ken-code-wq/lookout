@@ -89,6 +89,25 @@ enum RepoChecks {
             print("    \(branches.count) branches: \(branches.prefix(4).map { "\($0.name) -\($0.behind)/+\($0.ahead)" })")
         }
         _ = ok("commits", GitHubAPI.commits(repo.slug, branch: base))
+        // CI: the most recently pushed repository that has workflow runs.
+        for candidate in repos.prefix(15) {
+            guard case .success(let runs) = GitHubAPI.runs(candidate.slug, perPage: 5), let run = runs.first else { continue }
+            print("  ✓ runs \(candidate.slug): \(runs.count), latest \(run.workflow) \(run.status.title) on \(run.branch)")
+            if let jobs = ok("jobs", GitHubAPI.jobs(candidate.slug, run: run.id)), let job = jobs.first {
+                print("    \(jobs.count) jobs, \(job.name): \(job.steps.count) steps")
+                if let log = ok("log", GitHubAPI.jobLog(candidate.slug, job: job.id)) {
+                    let lines = GHLogLine.parse(log)
+                    print("    \(lines.count) log lines, \(lines.filter { $0.kind == .error }.count) errors, \(lines.filter { $0.kind == .group }.count) groups")
+                }
+            }
+            break
+        }
+        for candidate in repos.prefix(10) {
+            if case .success(let deploys) = GitHubAPI.deployments(candidate.slug), !deploys.isEmpty {
+                print("  ✓ deployments \(candidate.slug): \(deploys.map { "\($0.environment) \($0.state.title) \($0.provider) \($0.url ?? "-")" })")
+                break
+            }
+        }
         let open = ok("open pulls", GitHubAPI.pulls(repo.slug, open: true)) ?? []
         let closed = ok("closed pulls", GitHubAPI.pulls(repo.slug, open: false)) ?? []
         if let pr = open.first ?? closed.first {
