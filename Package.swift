@@ -34,6 +34,12 @@ let package = Package(
             dependencies: ["LocalObserverCore"],
             path: "Sources/LocalObserverRepos"
         ),
+        // Disk: what's filling the drive (build leftovers, caches, worktrees, Docker) and clearing it safely.
+        // Depends on nothing; the app hands it project folders and worktrees to look at.
+        .target(
+            name: "LocalObserverDisk",
+            path: "Sources/LocalObserverDisk"
+        ),
         // Widget views, shared by the extension and the app's debug snapshot harness.
         .target(
             name: "LocalObserverWidgetUI",
@@ -42,7 +48,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "LocalObserver",
-            dependencies: ["LocalObserverCore", "LocalObserverWidgetUI", "LocalObserverShelf", "LocalObserverRepos"],
+            dependencies: ["LocalObserverCore", "LocalObserverWidgetUI", "LocalObserverShelf", "LocalObserverRepos", "LocalObserverDisk"],
             path: "Sources/LocalObserver"
         ),
         // WidgetKit extension. SwiftPM builds the executable; packaging/build-app.sh wraps it in an .appex.
@@ -61,7 +67,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "LocalObserverVerification",
-            dependencies: ["LocalObserverCore", "LocalObserverShelf", "LocalObserverRepos"],
+            dependencies: ["LocalObserverCore", "LocalObserverShelf", "LocalObserverRepos", "LocalObserverDisk"],
             path: "Sources/LocalObserverVerification"
         )
     ]
