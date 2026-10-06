@@ -136,7 +136,28 @@ struct NotchRootView: View {
                 ShelfPresentation.shared.section = .shelf
                 if controller.mode == .expanded { prefs.notchTab = .shelf } else { controller.expand(tab: .shelf) }
             }
-            .shadow(color: .black.opacity(controller.mode == .compact ? 0 : 0.45), radius: 14, y: 6)
+            // Drawn as blurred pixels rather than with .shadow: in this transparent, borderless panel a layer shadow
+            // shows while the spring animates and then drops out once the view settles.
+            // Two layers, a wide soft one and a tight one at the edge, each a little wider than the shape so the
+            // blur isn't mostly hidden underneath it.
+            .background {
+                let open = controller.mode != .compact
+                ZStack {
+                    shape.fill(Color.black)
+                        .frame(width: size.width + 24, height: size.height + 6)
+                        .blur(radius: 18)
+                        .offset(y: 12)
+                        .opacity(0.42)
+                    shape.fill(Color.black)
+                        .frame(width: size.width + 6, height: size.height)
+                        .blur(radius: 5)
+                        .offset(y: 4)
+                        .opacity(0.35)
+                }
+                .frame(width: size.width, height: size.height, alignment: .top)
+                .opacity(open ? 1 : 0)
+                .allowsHitTesting(false)
+            }
             .onTapGesture {
                 switch controller.mode {
                 case .compact: controller.expand()
