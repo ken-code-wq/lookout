@@ -36,6 +36,14 @@ export LOOKOUT_SPARKLE_PUBLIC_KEY
 
 packaging/build-app.sh
 
+if security find-identity -v -p codesigning | grep -q "Developer ID Application" || [[ -n "${LOOKOUT_DEVELOPER_ID:-}" ]]; then
+  packaging/notarize.sh Lookout.app
+  NOTARIZED=1
+else
+  echo "warning: no Developer ID Application identity, so this release isn't notarized."
+  echo "         Users will need the xattr step from the README. See packaging/notarize.sh for what's needed."
+fi
+
 # No extended attributes in the archive, so nothing (quarantine included) rides along from this Mac.
 mkdir -p dist
 rm -f dist/Lookout.zip
@@ -88,5 +96,7 @@ rm -f "$ITEM"
 echo
 echo "Built dist/Lookout.zip ($VERSION, build $BUILD) and added it to appcast.xml. To publish:"
 echo "  1. gh release create $TAG dist/Lookout.zip --repo $REPO --title \"Lookout $VERSION\""
+# The README tells people to skip the xattr step for releases marked notarized.
+[[ -n "${NOTARIZED:-}" ]] && echo "     and say \"Notarized\" in the release notes, so people know to skip the xattr step"
 echo "  2. git add appcast.xml $PLIST && git commit -m \"release: $VERSION\" && git push"
 echo "     (after the zip is uploaded: the appcast points at it, and apps check it from main)"

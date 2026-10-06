@@ -71,7 +71,7 @@ If you run Claude Code, Codex, Cursor and friends side by side, you end up alt-t
 
 1. Download `Lookout.zip` from the [latest release](https://github.com/ken-code-wq/lookout/releases/latest) and unzip it.
 2. Move `Lookout.app` to `/Applications`.
-3. The build is not notarized by Apple, so macOS will block the first launch. Clear the quarantine flag once:
+3. Check the release notes: releases marked **notarized** open normally, and you can skip this step. For builds that aren't notarized by Apple, macOS will block the first launch. Clear the quarantine flag once:
 
    ```bash
    xattr -dr com.apple.quarantine /Applications/Lookout.app
@@ -81,7 +81,9 @@ If you run Claude Code, Codex, Cursor and friends side by side, you end up alt-t
 
 Requires macOS 14.2 or later on Apple Silicon.
 
-Desktop widgets need a build signed with a real certificate, so they won't appear in the prebuilt release. Build from source to use them.
+Desktop widgets need a build signed with a real certificate, so they won't appear in a prebuilt release that isn't notarized. Build from source to use them.
+
+Releases with update signing turned on keep themselves current through Sparkle: **Lookout › Check for Updates…**, with automatic checks in Settings › General.
 
 ## Automation
 
@@ -120,6 +122,8 @@ swift run LocalObserverVerification  # parsing and core checks
 
 For widgets and stable privacy permissions across rebuilds, create a local signing identity first with `packaging/make-signing-cert.sh`.
 
+To cut a release, `packaging/release.sh` builds, notarizes when a Developer ID is available (`packaging/notarize.sh`), zips, signs the zip for Sparkle and updates `appcast.xml`. It publishes nothing; it prints the upload and push steps. One-time setup is described at the top of each script.
+
 Regenerate the README screenshots from demo data:
 
 ```bash
@@ -138,6 +142,8 @@ LOCAL_OBSERVER_SNAPSHOT_DEMO=1 LOCAL_OBSERVER_SNAPSHOT_DIR=/tmp/shots .build/deb
 Everything runs on your Mac. There are no analytics, accounts or servers of ours.
 
 The only network requests are the optional plan-limit checks, which call each provider's own usage endpoint (Anthropic, OpenAI, GitHub, Cursor) with credentials already on your machine. They're off until you enable them per agent in Settings.
+
+Builds that update themselves also fetch `appcast.xml` from this repository on GitHub about once a day to look for a new version. Turn that off in Settings › General › Updates.
 
 Costs are estimates based on public API prices; subscription plans bill differently.
 
