@@ -7,6 +7,8 @@ let package = Package(
     products: [
         .executable(name: "LocalObserver", targets: ["LocalObserver"]),
         .executable(name: "LocalObserverWidgets", targets: ["LocalObserverWidgets"]),
+        // Run by agents' hooks, not by people. packaging/build-app.sh copies it next to the app's executable.
+        .executable(name: "lookout-hook", targets: ["lookout-hook"]),
         // Loaded by /usr/bin/perl, not linked into the app. See Sources/NowPlayingBridge.
         .library(name: "NowPlayingBridge", type: .dynamic, targets: ["NowPlayingBridge"])
     ],
@@ -40,6 +42,17 @@ let package = Package(
             name: "LocalObserverDisk",
             path: "Sources/LocalObserverDisk"
         ),
+        // Hooks: agent hook events, permission answers, the local socket, and merging Lookout's entries into agents'
+        // config files. Depends on nothing so the helper stays small and starts fast.
+        .target(
+            name: "LocalObserverHooks",
+            path: "Sources/LocalObserverHooks"
+        ),
+        .executableTarget(
+            name: "lookout-hook",
+            dependencies: ["LocalObserverHooks"],
+            path: "Sources/LookoutHook"
+        ),
         // Widget views, shared by the extension and the app's debug snapshot harness.
         .target(
             name: "LocalObserverWidgetUI",
@@ -48,7 +61,8 @@ let package = Package(
         ),
         .executableTarget(
             name: "LocalObserver",
-            dependencies: ["LocalObserverCore", "LocalObserverWidgetUI", "LocalObserverShelf", "LocalObserverRepos", "LocalObserverDisk"],
+            dependencies: ["LocalObserverCore", "LocalObserverWidgetUI", "LocalObserverShelf", "LocalObserverRepos", "LocalObserverDisk",
+                           "LocalObserverHooks"],
             path: "Sources/LocalObserver"
         ),
         // WidgetKit extension. SwiftPM builds the executable; packaging/build-app.sh wraps it in an .appex.
@@ -67,7 +81,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "LocalObserverVerification",
-            dependencies: ["LocalObserverCore", "LocalObserverShelf", "LocalObserverRepos", "LocalObserverDisk"],
+            dependencies: ["LocalObserverCore", "LocalObserverShelf", "LocalObserverRepos", "LocalObserverDisk", "LocalObserverHooks"],
             path: "Sources/LocalObserverVerification"
         )
     ]

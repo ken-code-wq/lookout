@@ -76,6 +76,7 @@ struct AgentPeekView: View {
     @ObservedObject var agentStore: AgentStore
     @ObservedObject var state: AppState
     @ObservedObject var prefs = Preferences.shared
+    @ObservedObject private var approvals = ApprovalCenter.shared
     var openMain: (SidebarItem) -> Void
 
     /// Every running CLI session, before the provider filter.
@@ -129,6 +130,8 @@ struct AgentPeekView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: size == .small ? 8 : 10) {
             header
+            // Permission requests come first: an agent is blocked until they're answered.
+            if prefs.peekSetupDone && !approvals.pending.isEmpty { ApprovalListSection(compact: size == .small) }
             if !prefs.peekSetupDone {
                 PeekSetupCard(prefs: prefs, compact: size == .small)
                     .transition(.opacity.combined(with: .scale(scale: 0.97)))

@@ -324,6 +324,8 @@ public struct AgentSession: Identifiable, Hashable, Sendable {
     public var contextTokens: Int64?
     /// The git checkout the session works in, read live for running sessions. Tells worktrees apart.
     public var checkout: GitCheckout? = nil
+    /// Whether `state` was read off the transcript or reported live by one of the agent's hooks.
+    public var stateSource: AgentStateSource = .inferred
 
     public init(
         id: String,

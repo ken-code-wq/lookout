@@ -66,6 +66,10 @@ public final class AgentStore: ObservableObject {
     private let persistsLedger: Bool
     /// Set by `loadDemo`: the store shows injected data and never scans, fetches, or writes.
     private var isDemo = false
+    /// Running sessions as the last scan found them, before hook states are laid over them.
+    private var scannedProcesses: [AgentSession] = []
+    /// States agents reported through hooks, keyed by running session id. See `AgentHookOverlay`.
+    public private(set) var hookStates: [String: AgentHookState] = [:]
 
     private enum Keys {
         static let settings = "LocalObserver.agentSettings"
@@ -164,7 +168,8 @@ public final class AgentStore: ObservableObject {
             let counts = self.lastCounts
             var snapshot = fresh
             snapshot.usageEvents = []
-            snapshot.processes = snapshot.processes.map(Self.withCheckout)
+            self.scannedProcesses = snapshot.processes.map(Self.withCheckout)
+            snapshot.processes = AgentHookOverlay.apply(self.hookStates, to: self.scannedProcesses)
             snapshot.integrations = fresh.integrations.map { integration in
                 var updated = integration
                 updated.usageEventCount = counts[integration.agent] ?? 0
@@ -192,6 +197,7 @@ public final class AgentStore: ObservableObject {
         refreshTask?.cancel()
         limitsTask?.cancel()
         self.snapshot = snapshot
+        scannedProcesses = snapshot.processes
         ledgerEvents = ledger
         ledgerSignature = Self.signature(ledger)
         ledgerRevision += 1
@@ -233,6 +239,14 @@ public final class AgentStore: ObservableObject {
             self.limitsTask = nil
             if self.isRefreshingLimits { self.isRefreshingLimits = false }
         }
+    }
+
+    /// Replaces the hook states and re-applies them to the last scan without scanning again.
+    public func setHookStates(_ states: [String: AgentHookState]) {
+        guard states != hookStates else { return }
+        hookStates = states
+        let processes = AgentHookOverlay.apply(states, to: scannedProcesses)
+        if processes != snapshot.processes { snapshot.processes = processes }
     }
 
     // MARK: - Settings

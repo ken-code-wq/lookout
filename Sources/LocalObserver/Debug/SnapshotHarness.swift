@@ -133,6 +133,7 @@ enum SnapshotHarness {
                 ("palette", AnyView(CommandPalette(state: makeState(), agentStore: store)), CGSize(width: 640, height: 440)),
                 ("replay", AnyView(replay(store)), CGSize(width: 1180, height: 820)),
                 ("settings-disk", AnyView(DiskSettingsPane()), CGSize(width: 620, height: 560)),
+                ("settings-hooks", AnyView(SettingsPage(title: "Agents") { AgentHooksSettings() }), CGSize(width: 620, height: 620)),
                 ("gh-issues", AnyView(GHRepoView(store: GitHubStore.shared, repos: RepoStore.shared, slug: "acme/aurora-api", tab: .issues)), CGSize(width: width, height: 700)),
                 ("gh-issue", AnyView(GHIssueView(store: GitHubStore.shared, slug: "acme/aurora-api", number: 231)), CGSize(width: width, height: 900)),
                 ("inbox", AnyView(InboxPage(store: GitHubStore.shared, repos: RepoStore.shared)), CGSize(width: width, height: 700)),
@@ -285,6 +286,43 @@ enum SnapshotHarness {
             Preferences.shared.peekSize = savedSize
             Preferences.shared.peekWidth = savedWidth
             LiquidGlass.forceFallback = false
+
+            // Permission requests answered from the notch, Peek and the menu bar, and a quick reply at "Your turn".
+            if demo && (wanted("notch-approval") || wanted("notch-reply") || wanted("menubar-approvals") || wanted("peek-approvals")) {
+                let center = ApprovalCenter.shared
+                SnapshotDemo.loadApprovals(into: center, store: store)
+                let replyID = store.runningSessions.first { $0.state == .waiting }?.id ?? ""
+                let pages: [(String, ApprovalCenter.NotchPage, Bool)] = [
+                    ("notch-approval", .approvals, false), ("notch-approval-keyboard", .approvals, true), ("notch-reply", .reply(sessionID: replyID), false),
+                ]
+                for (name, page, armed) in pages where wanted(name) {
+                    center.notchPage = page
+                    center.keyboardArmed = armed
+                    let controller = NotchController()
+                    controller.debugShow(.expanded)
+                    let view = AnyView(NotchRootView(controller: controller, state: makeState(), agentStore: store)
+                        .background(LinearGradient(colors: [Color(red: 0.2, green: 0.16, blue: 0.3), Color(red: 0.35, green: 0.18, blue: 0.3)],
+                                                   startPoint: .top, endPoint: .bottom)))
+                    await render(view, size: NotchController.panelSize, dark: true, to: directory.appendingPathComponent("\(name).png"))
+                }
+                center.notchPage = nil
+                for dark in [false, true] where wanted("menubar-approvals") {
+                    await render(AnyView(MenuBarView(state: makeState(), agentStore: store)), size: CGSize(width: 360, height: 900), dark: dark,
+                                 to: directory.appendingPathComponent("menubar-approvals-\(dark ? "dark" : "light").png"))
+                }
+                if wanted("peek-approvals") {
+                    LiquidGlass.forceFallback = true
+                    prefs.peekSetupDone = true
+                    for dark in [false, true] {
+                        let view = AnyView(AgentPeekView(agentStore: store, state: peekState) { _ in }.frame(width: 336, height: 760, alignment: .topLeading))
+                        await render(view, size: CGSize(width: 336, height: 760), dark: dark,
+                                     to: directory.appendingPathComponent("peek-approvals-\(dark ? "dark" : "light").png"))
+                    }
+                    prefs.peekSetupDone = saved.3
+                    LiquidGlass.forceFallback = false
+                }
+                SnapshotDemo.clearApprovals(from: center, store: store)
+            }
             print("Snapshots written to \(directory.path)")
             exit(0)
         }

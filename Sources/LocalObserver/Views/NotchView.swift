@@ -52,6 +52,8 @@ struct NotchRootView: View {
     @ObservedObject private var media = MediaController.shared
     @ObservedObject private var keepAwake = KeepAwake.shared
     @ObservedObject private var repos = RepoStore.shared
+    /// Permission requests and quick replies take over the open notch (see ApprovalCenter).
+    @ObservedObject private var approvals = ApprovalCenter.shared
     /// Its own pillar: the Shelf tab reads nothing from the agent or server stores.
     var shelf: ShelfStore = .shared
     @State private var dropTargeted = false
@@ -62,6 +64,11 @@ struct NotchRootView: View {
 
     /// Each page gets the height it needs; media is a compact strip.
     private var expandedBody: CGFloat {
+        switch approvals.notchPage {
+        case .approvals?: return NotchApprovalPage.height
+        case .reply?: return NotchReplyPage.height
+        case nil: break
+        }
         switch prefs.notchTab {
         case .media: return 138
         case .sound: return 214
@@ -395,6 +402,7 @@ struct NotchRootView: View {
                 tabBar
                 Spacer(minLength: notch.width + 16)
                 HStack(spacing: 2) {
+                    NotchApprovalPill(center: approvals)
                     timerButton
                     NotchIconButton(symbol: "arrow.clockwise", help: "Refresh", spinning: agentStore.isScanning) {
                         state.refresh()
@@ -418,18 +426,10 @@ struct NotchRootView: View {
             .padding(.top, 2)
 
             Group {
-                switch prefs.notchTab {
-                case .agents: agentsTab
-                case .usage: usageTab
-                case .limits: limitsTab
-                case .repos: reposTab
-                case .servers: serversTab
-                case .shelf: ShelfNotchPage(store: shelf) { controller.collapse() }
-                case .media: NotchMediaPage()
-                case .sound:
-                    NotchCard {
-                        ScrollView { SoundMixerView(maxRows: 12) }.scrollIndicators(.never)
-                    }
+                switch approvals.notchPage {
+                case .approvals?: NotchApprovalPage(center: approvals)
+                case .reply(let sessionID)?: NotchReplyPage(center: approvals, agentStore: agentStore, sessionID: sessionID)
+                case nil: tabContent
                 }
             }
             .padding(.horizontal, 31)
@@ -439,6 +439,22 @@ struct NotchRootView: View {
             // instead of SwiftUI centering it and pushing the tab bar up off the screen.
             .frame(height: expandedBody, alignment: .top)
             .clipped()
+        }
+    }
+
+    @ViewBuilder private var tabContent: some View {
+        switch prefs.notchTab {
+        case .agents: agentsTab
+        case .usage: usageTab
+        case .limits: limitsTab
+        case .repos: reposTab
+        case .servers: serversTab
+        case .shelf: ShelfNotchPage(store: shelf) { controller.collapse() }
+        case .media: NotchMediaPage()
+        case .sound:
+            NotchCard {
+                ScrollView { SoundMixerView(maxRows: 12) }.scrollIndicators(.never)
+            }
         }
     }
 
@@ -819,6 +835,7 @@ private struct NotchSessionRow: View {
                     }
                 }
                 Spacer(minLength: 6)
+                if AgentActivityBucket(session) == .yourTurn && session.process?.host != nil { NotchReplyButton(session: session) }
                 HostAppIcon(session: session, size: 16)
                 stateLabel
             }

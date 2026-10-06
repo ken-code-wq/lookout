@@ -155,6 +155,7 @@ struct CommandPalette: View {
             PaletteItem(id: "a:peek", group: .actions, title: "Toggle Agent Peek", symbol: "eye") { LiveSurfaces.shared.togglePeek() },
             PaletteItem(id: "a:digest", group: .actions, title: "Morning digest", symbol: "sun.max", keywords: "today summary overnight") { go(.home) },
         ]
+        items += ApprovalPalette.items(agentStore: agentStore)
         let pages: [SidebarItem] = [.home, .agentActivity, .agentUsage, .agentLimits, .repos, .inbox, .github, .ci, .pullRequests,
                                     .all, .favorites, .launchers, .cleanup]
         items += pages.map { page in
