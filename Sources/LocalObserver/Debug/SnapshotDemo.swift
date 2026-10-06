@@ -243,7 +243,7 @@ enum SnapshotDemo {
                                httpState: http, statusCode: http == .online ? 200 : 0, latencyMs: latency, pageTitle: title,
                                cpu: cpu, rssKB: mb * 1024, uptime: uptime, git: git)
         }
-        state.loadDemo(servers: [
+        var list = [
             server(52_101, "aurora-api", "node", "node dist/server.js --port 3000", 3000, .node, .online,
                    title: "Aurora API", latency: 12, cpu: 3.4, mb: 182, uptime: 3 * 3600 + 1_240, branch: "main"),
             server(53_017, "aurora-api", "node", "node dist/server.js --port 3001", 3001, .node, .online,
@@ -262,7 +262,61 @@ enum SnapshotDemo {
                         port: 6380, bindAddress: "*", workingDirectory: "/", projectRoot: "\(root)/aurora-api",
                         projectName: "Redis · aurora", projectType: .database, httpState: .offline, cpu: 0.3, rssKB: 48 * 1024,
                         uptime: 2 * 3600),
-        ])
+        ]
+        // aurora-api runs from a launcher (with logs and an error spike); its worker crashed.
+        list[0].managedID = demoAPI.id
+        state.loadDemo(servers: list, launchers: [demoAPI, demoWorker])
+        loadServerLogs()
+    }
+
+    static let demoAPI = ManagedServer(id: UUID(uuidString: "D3A0A0A0-0000-4000-8000-000000000001")!, name: "aurora-api",
+                                       workingDirectory: "\(root)/aurora-api", command: "npm run dev", port: 3000, lastPGID: 52_101)
+    static let demoWorker = ManagedServer(id: UUID(uuidString: "D3A0A0A0-0000-4000-8000-000000000002")!, name: "aurora-worker",
+                                          workingDirectory: "\(root)/aurora-api", command: "npm run worker")
+
+    private static func loadServerLogs() {
+        let err = "\u{1E}", note = "\u{1D}", esc = "\u{1B}"
+        var log = """
+        \(note)Started 6 Oct 2026 at 09:12:04 · npm run dev
+
+        > aurora-api@2.4.0 dev
+        > tsx watch src/server.ts
+
+        \(esc)[36m[server]\(esc)[0m listening on \(esc)[1mhttp://localhost:3000\(esc)[0m
+        \(esc)[36m[db]\(esc)[0m connected to postgres://localhost:5432/aurora (pool 10)
+        \(err)\(esc)[33m(node:52101) [DEP0040] DeprecationWarning: The `punycode` module is deprecated.\(esc)[0m
+         GET /health \(esc)[32m200\(esc)[0m in 3ms
+         GET /api/projects \(esc)[32m200\(esc)[0m in 41ms
+         POST /api/search \(esc)[32m200\(esc)[0m in 128ms
+         GET /api/projects/42 \(esc)[33m404\(esc)[0m in 6ms
+
+        """
+        for i in 0..<4 {
+            log += """
+             POST /api/search \(esc)[31m500\(esc)[0m in \(212 + i * 17)ms
+            \(err)\(esc)[31mError: rate limiter misconfigured for tenant "acme"\(esc)[0m
+            \(err)    at Limiter.allow (src/limits/limiter.ts:58:13)
+            \(err)    at searchHandler (src/routes/search.ts:31:22)
+
+            """
+        }
+        log += " GET /api/projects \(esc)[32m200\(esc)[0m in 38ms\n"
+        ServerLogStore.shared.loadDemo(demoAPI.id, text: log)
+        ServerLogStore.shared.loadDemo(demoWorker.id, text: """
+        \(note)Started 6 Oct 2026 at 09:12:05 · npm run worker
+        [worker] polling queue "emails" every 2s
+        \(err)\(esc)[31mUnhandled promise rejection:\(esc)[0m Error: connect ECONNREFUSED 127.0.0.1:6379
+        \(err)    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1555:16)
+        \(note)exit 1
+
+        """)
+        let crash = ServerSupervisor.Crash(
+            id: demoWorker.id, name: demoWorker.name, status: .exited(1), clean: false, at: Date().addingTimeInterval(-240),
+            ranFor: 14, lastLines: ["[worker] polling queue \"emails\" every 2s",
+                                    "Unhandled promise rejection: Error: connect ECONNREFUSED 127.0.0.1:6379",
+                                    "    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1555:16)"],
+            restart: .gaveUp(attempts: 3))
+        ServerSupervisor.shared.loadDemo(crash: crash, spiking: [demoAPI.id: 16], autoRestart: [demoWorker.id])
     }
 
     // MARK: - Live diffs

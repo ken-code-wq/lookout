@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import Darwin
+import LocalObserverCore
 
 /// Killing + launching local dev servers.
 enum ProcessManager {
@@ -24,17 +25,30 @@ enum ProcessManager {
 
     // MARK: - launch
 
-    static var logDirectory: URL {
-        let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Logs/LocalObserver", isDirectory: true)
-        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    /// `~/Library/Application Support/LocalObserver/Logs/Servers`. Logs from before the move (in ~/Library/Logs)
+    /// are moved over once; a rename keeps the file, so a server still running from back then keeps writing to it.
+    static let logDirectory: URL = {
+        let fm = FileManager.default
+        let url = fm.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/LocalObserver/Logs/Servers", isDirectory: true)
+        try? fm.createDirectory(at: url, withIntermediateDirectories: true)
+        let legacy = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/LocalObserver", isDirectory: true)
+        for name in (try? fm.contentsOfDirectory(atPath: legacy.path)) ?? [] where name.hasSuffix(".log") {
+            let target = url.appendingPathComponent(name)
+            if !fm.fileExists(atPath: target.path) { try? fm.moveItem(at: legacy.appendingPathComponent(name), to: target) }
+        }
         return url
-    }
+    }()
 
     static func logURL(for server: ManagedServer) -> URL {
         let safe = server.name.lowercased()
             .map { $0.isLetter || $0.isNumber ? $0 : "-" }
         return logDirectory.appendingPathComponent("\(String(safe))-\(server.id.uuidString.prefix(6)).log")
+    }
+
+    /// The previous log, kept once the current one passes its size cap.
+    static func rotatedLogURL(for server: ManagedServer) -> URL {
+        logURL(for: server).deletingPathExtension().appendingPathExtension("1.log")
     }
 
     enum LaunchError: LocalizedError {
@@ -49,8 +63,9 @@ enum ProcessManager {
     }
 
     /// Launches `command` through a login zsh in its own process group, detached from our lifetime.
-    /// stdout/stderr go to the server's log file. Returns the new process group id.
-    static func launch(_ server: ManagedServer) throws -> Int32 {
+    /// stdout and stderr go to the server's log file, framed so they can be told apart (see ServerLogFraming).
+    /// `onExit` gets the group id and the shell's raw wait status if it exits while Lookout runs. Returns the new process group id.
+    static func launch(_ server: ManagedServer, onExit: (@Sendable (_ pgid: Int32, _ waitStatus: Int32) -> Void)? = nil) throws -> Int32 {
         var isDir: ObjCBool = false
         let cwd = server.workingDirectory
         if !cwd.isEmpty, !(FileManager.default.fileExists(atPath: cwd, isDirectory: &isDir) && isDir.boolValue) {
@@ -58,7 +73,7 @@ enum ProcessManager {
         }
 
         let log = logURL(for: server)
-        let header = "\n── \(Date().formatted(date: .abbreviated, time: .standard)) · \(server.command)\n"
+        let header = ServerLogFraming.note("Started \(Date().formatted(date: .abbreviated, time: .standard)) · \(server.command)")
         if let data = header.data(using: .utf8) {
             if FileManager.default.fileExists(atPath: log.path), let h = try? FileHandle(forWritingTo: log) {
                 h.seekToEndOfFile(); h.write(data); try? h.close()
@@ -68,10 +83,11 @@ enum ProcessManager {
         }
 
         // GUI apps get a bare PATH; pull in the user's shell setup (nvm, pyenv, homebrew…).
-        var script = "[ -f ~/.zshrc ] && source ~/.zshrc >/dev/null 2>&1; "
-        if !cwd.isEmpty { script += "cd \(shellQuote(cwd)) || exit 1; " }
-        if let port = server.port { script += "export PORT=\(port); " }
-        script += server.command
+        var body = ""
+        if !cwd.isEmpty { body += "cd \(shellQuote(cwd)) || exit 1; " }
+        if let port = server.port { body += "export PORT=\(port); " }
+        body += server.command
+        let script = "[ -f ~/.zshrc ] && source ~/.zshrc >/dev/null 2>&1\n" + ServerLogFraming.wrap(body)
 
         var fileActions: posix_spawn_file_actions_t? = nil
         posix_spawn_file_actions_init(&fileActions)
@@ -89,7 +105,9 @@ enum ProcessManager {
         var env = ProcessInfo.processInfo.environment
         let extra = ["/opt/homebrew/bin", "/usr/local/bin", "\(NSHomeDirectory())/.bun/bin", "\(NSHomeDirectory())/.cargo/bin"]
         env["PATH"] = (extra + [env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"]).joined(separator: ":")
-        env["FORCE_COLOR"] = "0"
+        // The logs panel renders colour, so ask for it; and Python holds stdout back when it isn't a terminal.
+        env["FORCE_COLOR"] = "1"
+        env["PYTHONUNBUFFERED"] = "1"
         let envStrings = env.map { "\($0.key)=\($0.value)" }
 
         let argv = ["/bin/zsh", "-l", "-c", script]
@@ -107,7 +125,8 @@ enum ProcessManager {
         // Reap the shell when it exits so it never lingers as a zombie.
         DispatchQueue.global(qos: .background).async {
             var status: Int32 = 0
-            waitpid(pid, &status, 0)
+            guard waitpid(pid, &status, 0) == pid else { return }
+            onExit?(pid, status)
         }
         return pid
     }

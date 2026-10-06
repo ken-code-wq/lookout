@@ -104,6 +104,7 @@ private struct LauncherRow: View {
                     } else if running {
                         Tag(text: "Starting…", color: .yellow)
                     }
+                    LauncherHealthTag(launcher: launcher)
                 }
                 HStack(spacing: 6) {
                     Text(launcher.command).font(NFont.monoSmall).foregroundStyle(N.text2)
@@ -131,6 +132,7 @@ private struct LauncherRow: View {
                     }
                     .buttonStyle(SecondaryButtonStyle())
                 }
+                LauncherLogsButton(state: state, launcher: launcher)
                 Menu {
                     LauncherMenu(state: state, launcher: launcher)
                 } label: {

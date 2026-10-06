@@ -635,6 +635,14 @@ private struct GeneralPane: View {
                     ))
                     .toggleStyle(.switch).labelsHidden()
                 }
+                SettingsDivider()
+                SettingsRow(title: "When a launched server crashes", detail: "A server Lookout started exits without being stopped") {
+                    Toggle("When a launched server crashes", isOn: Binding(
+                        get: { prefs.notifyServerCrash },
+                        set: { prefs.notifyServerCrash = $0; if $0 { requestPermission() } }
+                    ))
+                    .toggleStyle(.switch).labelsHidden()
+                }
             }
             if notificationsDenied {
                 Text("Notifications are turned off for Lookout in System Settings.")

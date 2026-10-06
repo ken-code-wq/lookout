@@ -385,6 +385,7 @@ private struct ServerRow: View {
                 }
                 if let git = server.git { BranchTag(git, maxWidth: 160) }
                 if server.isManaged { Tag(text: "Launcher", color: .purple) }
+                ServerHealthBadge(managedID: server.managedID)
                 // The branch is what tells two checkouts apart; the page title moves to the inspector to make room.
                 if server.git == nil, !server.pageTitle.isEmpty && server.pageTitle != server.projectName {
                     Text(server.pageTitle).font(NFont.small).foregroundStyle(N.text3).lineLimit(1)

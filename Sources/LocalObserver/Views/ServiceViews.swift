@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import LocalObserverCore
 import LocalObserverServices
 
 extension DockerState {
@@ -335,7 +336,7 @@ struct ContainerLogsSheet: View {
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
                                 Text(line.time.map { Self.time.string(from: $0) } ?? "")
                                     .foregroundStyle(N.text3).frame(width: 58, alignment: .leading)
-                                Text(LogTail.stripANSI(line.text)).foregroundStyle(N.text).textSelection(.enabled)
+                                Text(ANSI.strip(line.text)).foregroundStyle(N.text).textSelection(.enabled)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
                             .font(.system(size: 11, design: .monospaced))

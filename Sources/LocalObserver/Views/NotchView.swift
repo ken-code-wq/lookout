@@ -696,6 +696,7 @@ struct NotchRootView: View {
         return NotchCard {
             VStack(alignment: .leading, spacing: 2) {
                 NotchCardTitle(title: "Listening", value: "\(servers.count)")
+                NotchCrashedLaunchers(state: state)
                 if servers.isEmpty {
                     NotchEmpty(symbol: "moon.zzz", text: "Nothing running")
                 } else {
@@ -882,6 +883,7 @@ private struct NotchServerRow: View {
             Text(server.projectName).font(.system(size: 12)).foregroundStyle(NotchColor.text).lineLimit(1)
                 .layoutPriority(1)
             if let git = server.git { NotchBranch(git: git) }
+            NotchServerHealthBadge(managedID: server.managedID)
             Spacer(minLength: 4)
             if hover {
                 Button { state.stop(server) } label: {

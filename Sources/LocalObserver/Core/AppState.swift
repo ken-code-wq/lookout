@@ -176,6 +176,7 @@ final class AppState: ObservableObject {
         }
         scheduleTimer()
         refresh()
+        ServerSupervisor.shared.attach(self)
         // React to the window opening or closing without waiting for the next slow tick.
         NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification,
                                                object: nil, queue: .main) { [weak self] _ in
@@ -218,14 +219,14 @@ final class AppState: ObservableObject {
     /// Debug/demo (snapshot harness): shows these servers instead of scanning this Mac's ports, and hides
     /// saved launchers and favorites. Never persisted; the scanner and timer stay off for this instance.
     private var isDemo = false
-    func loadDemo(servers demo: [ServerEntry]) {
+    func loadDemo(servers demo: [ServerEntry], launchers: [ManagedServer] = []) {
         isDemo = true
         timer?.invalidate()
         timer = nil
         scanTask?.cancel()
         scanTask = nil
         isScanning = false
-        managed = []
+        managed = launchers
         favorites = []
         servers = demo
         lastScan = Date()
@@ -406,6 +407,7 @@ final class AppState: ObservableObject {
 
     func stop(_ server: ServerEntry, force: Bool = false) {
         let launcher = managed.first { $0.id == server.managedID }
+        ServerSupervisor.shared.willStop(server.managedID)
         let sent: Bool
         if let pgid = launcher?.lastPGID, ProcessManager.isGroupAlive(pgid: pgid) {
             sent = ProcessManager.terminateGroup(pgid: pgid, force: force)
@@ -493,11 +495,15 @@ final class AppState: ObservableObject {
             return
         }
         do {
-            let pgid = try ProcessManager.launch(launcher)
+            let id = launcher.id
+            let pgid = try ProcessManager.launch(launcher) { pgid, status in
+                ServerSupervisor.shellExited(id, pgid: pgid, waitStatus: status)
+            }
             if let i = managed.firstIndex(where: { $0.id == launcher.id }) {
                 managed[i].lastPGID = pgid
                 persistManaged()
             }
+            ServerSupervisor.shared.didLaunch(launcher, pgid: pgid)
             show(Toast(message: "Starting \(launcher.name)…", symbol: "play.circle", tone: .success))
             refreshSoon([0.8, 2, 4, 7, 12])
         } catch {
@@ -518,12 +524,14 @@ final class AppState: ObservableObject {
 
     func stop(_ launcher: ManagedServer) {
         if let s = server(for: launcher) { stop(s); return }
+        ServerSupervisor.shared.willStop(launcher.id)
         guard let pgid = launcher.lastPGID, ProcessManager.terminateGroup(pgid: pgid) else { return }
         show(Toast(message: "Stopped \(launcher.name)", symbol: "stop.circle"))
         refreshSoon([0.3, 1.0])
     }
 
     func restart(_ launcher: ManagedServer) {
+        ServerSupervisor.shared.willStop(launcher.id)
         guard let pgid = launcher.lastPGID, ProcessManager.isGroupAlive(pgid: pgid) else { start(launcher); return }
         ProcessManager.terminateGroup(pgid: pgid)
         Task { [weak self] in
