@@ -22,6 +22,7 @@ struct RepoInspectorView: View {
                     }
                 }
                 if !repo.worktrees.isEmpty { worktrees }
+                EnvSection(folder: repo.root)
                 cleanup
             }
             .padding(20)
@@ -38,7 +39,10 @@ struct RepoInspectorView: View {
             FolderIconView(folder: repo.root, name: repo.name, size: 52)
                 .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
             Text(repo.name).font(NFont.title).foregroundStyle(N.text).textSelection(.enabled).padding(.top, 6)
-            BranchTag(branch: repo.refLabel, detached: repo.branch == nil, maxWidth: 300)
+            HStack(spacing: 6) {
+                BranchTag(branch: repo.refLabel, detached: repo.branch == nil, maxWidth: 300)
+                EnvMissingBadge(folder: repo.root, standalone: true)
+            }
         }
     }
 

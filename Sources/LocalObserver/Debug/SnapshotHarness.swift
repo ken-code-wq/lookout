@@ -8,6 +8,7 @@ import LocalObserverShelf
 import LocalObserverRepos
 import LocalObserverDisk
 import LocalObserverServices
+import LocalObserverEnv
 
 /// Debug-only: `LOCAL_OBSERVER_SNAPSHOT_DIR=/tmp/shots .build/debug/LocalObserver` renders each agent page
 /// offscreen in light and dark mode, writes PNGs, and quits. Nothing is shown on screen or activated.
@@ -101,6 +102,7 @@ enum SnapshotHarness {
             SnapshotDemo.loadGitHub(into: GitHubStore.shared)
             SnapshotDemo.loadDisk(into: DiskStore.shared)
             SnapshotDemo.loadServices(into: ServicesStore.shared)
+            SnapshotDemo.loadEnv(into: EnvStore.shared)
             SnapshotDemo.loadCI(into: CIStore.shared)
             SnapshotDemo.loadContributions(into: GitHubStore.shared)
             SnapshotDemo.loadAgentTasks(into: AgentTaskStore.shared)

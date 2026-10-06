@@ -6,6 +6,7 @@ import LocalObserverRepos
 import LocalObserverDisk
 import LocalObserverHooks
 import LocalObserverServices
+import LocalObserverEnv
 
 /// Debug-only: `LOCAL_OBSERVER_SNAPSHOT_DEMO=1` makes the snapshot harness render made-up but plausible data
 /// (projects, sessions, a year of usage, plan limits, servers, audio) so screenshots never show this Mac's.
@@ -632,6 +633,38 @@ enum SnapshotDemo {
             DockerLogLine(time: ago(899), text: "    at RedisClient.connect (node_modules/redis/dist/index.js:412:11)", isStderr: true),
         ]]
         store.loadDemo(availability: .ready, containers: containers, inspected: inspected, logs: logs)
+    }
+
+    // MARK: - Env files
+
+    /// Made-up values only; every one is shown masked anyway.
+    static func loadEnv(into store: EnvStore) {
+        func file(_ name: String, _ text: String, tracked: Bool = false, ignored: Bool = true) -> EnvFileInfo {
+            EnvFileInfo(name: name, path: "\(root)/aurora-api/\(name)", parsed: Dotenv.parse(text), tracked: tracked, ignored: ignored)
+        }
+        let aurora = [
+            file(".env.example", """
+            DATABASE_URL=postgresql://aurora:password@localhost:5433/aurora_dev
+            REDIS_URL=redis://localhost:6380
+            STRIPE_SECRET_KEY=
+            STRIPE_WEBHOOK_SECRET=
+            OPENAI_API_KEY=
+            SENTRY_DSN=
+            PORT=3000
+            """, tracked: true, ignored: false),
+            file(".env", """
+            PORT=3000
+            DATABASE_URL=postgresql://aurora:demo@localhost:5433/aurora_dev
+            REDIS_URL="redis://default:${REDIS_PASSWORD}@localhost:6380"
+            LOG_LEVEL=debug
+            """, tracked: false, ignored: false),
+            file(".env.local", """
+            STRIPE_SECRET_KEY=sk_test_51DemoOnlyNotARealKey0000000000
+            OPENAI_API_KEY=sk-proj-demo0only0not0a0real0key0000000000
+            """),
+            file(".env.production", "SENTRY_DSN=https://demo@o0.ingest.sentry.io/0"),
+        ]
+        store.loadDemo(["\(root)/aurora-api": aurora])
     }
 
     static func loadGitHub(into store: GitHubStore) {

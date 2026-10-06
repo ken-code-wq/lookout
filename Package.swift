@@ -60,6 +60,13 @@ let package = Package(
             dependencies: ["LocalObserverDisk"],
             path: "Sources/LocalObserverServices"
         ),
+        // Env: a project's .env files, parsed and resolved in precedence order, checked against git. Read-only. Uses
+        // Repos only for its git runner.
+        .target(
+            name: "LocalObserverEnv",
+            dependencies: ["LocalObserverRepos"],
+            path: "Sources/LocalObserverEnv"
+        ),
         // Widget views, shared by the extension and the app's debug snapshot harness.
         .target(
             name: "LocalObserverWidgetUI",
@@ -69,7 +76,7 @@ let package = Package(
         .executableTarget(
             name: "LocalObserver",
             dependencies: ["LocalObserverCore", "LocalObserverWidgetUI", "LocalObserverShelf", "LocalObserverRepos", "LocalObserverDisk",
-                           "LocalObserverHooks", "LocalObserverServices"],
+                           "LocalObserverHooks", "LocalObserverServices", "LocalObserverEnv"],
             path: "Sources/LocalObserver"
         ),
         // WidgetKit extension. SwiftPM builds the executable; packaging/build-app.sh wraps it in an .appex.
@@ -89,7 +96,7 @@ let package = Package(
         .executableTarget(
             name: "LocalObserverVerification",
             dependencies: ["LocalObserverCore", "LocalObserverShelf", "LocalObserverRepos", "LocalObserverDisk", "LocalObserverHooks",
-                           "LocalObserverServices"],
+                           "LocalObserverServices", "LocalObserverEnv"],
             path: "Sources/LocalObserverVerification"
         )
     ]
