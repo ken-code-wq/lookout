@@ -98,6 +98,7 @@ enum SnapshotHarness {
             SnapshotDemo.loadRepos(into: RepoStore.shared)
             SnapshotDemo.loadGitHub(into: GitHubStore.shared)
             SnapshotDemo.loadDisk(into: DiskStore.shared)
+            SnapshotDemo.loadCI(into: CIStore.shared)
         } else {
             AppAudio.shared.refresh()
         }
@@ -127,6 +128,7 @@ enum SnapshotHarness {
                 ("pulls", AnyView(PullRequestsPage(store: RepoStore.shared)), CGSize(width: width, height: 800)),
                 ("settings-repos", AnyView(RepoSettingsPane()), CGSize(width: 620, height: 900)),
                 ("cleanup", AnyView(CleanupPage(store: DiskStore.shared)), CGSize(width: width, height: 1500)),
+                ("ci", AnyView(CIPage(store: CIStore.shared, repos: RepoStore.shared, agents: store)), CGSize(width: width, height: 1200)),
                 ("replay", AnyView(replay(store)), CGSize(width: 1180, height: 820)),
                 ("settings-disk", AnyView(DiskSettingsPane()), CGSize(width: 620, height: 560)),
                 ("gh-repos", AnyView(GitHubPage(store: GitHubStore.shared, repos: RepoStore.shared, agents: store)), CGSize(width: width, height: 1100)),
