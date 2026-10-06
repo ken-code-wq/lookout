@@ -77,6 +77,9 @@ struct ContentView: View {
         .sheet(item: $state.draft) { draft in
             LauncherSheet(state: state, draft: draft)
         }
+        .sheet(item: $state.replaySession) { session in
+            SessionReplayView(session: session) { state.replaySession = nil }
+        }
         .frame(minWidth: 760, minHeight: 540)
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { windowWidth = $0 }
         .onChange(of: isInspecting) { _, open in

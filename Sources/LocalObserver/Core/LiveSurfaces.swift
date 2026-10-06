@@ -129,6 +129,12 @@ final class LiveSurfaces: NSObject, NSWindowDelegate {
 
     // MARK: Main window
 
+    /// Opens the main window with a session's replay on top.
+    func replay(_ session: AgentSession) {
+        openMain(state?.sidebar ?? .agentActivity)
+        state?.replaySession = session
+    }
+
     func openMain(_ page: SidebarItem) {
         state?.sidebar = page
         openWindow?(page)

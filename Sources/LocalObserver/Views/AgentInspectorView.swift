@@ -134,6 +134,15 @@ struct AgentInspectorView: View {
                     .buttonStyle(PrimaryButtonStyle())
                     .help("⌘J")
             }
+            if SessionReplayReader.supports(session.agent), !session.sourcePath.isEmpty {
+                Button {
+                    LiveSurfaces.shared.replay(session)
+                } label: {
+                    Label("Replay", systemImage: "play.rectangle")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .help("Step through everything this session did")
+            }
             if !session.projectPath.isEmpty {
                 Button("Reveal project") { AgentActions.reveal(session.projectPath) }
                     .buttonStyle(SecondaryButtonStyle())
