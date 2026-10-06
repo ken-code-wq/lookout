@@ -147,3 +147,30 @@ enum ProcessManager {
         NSWorkspace.shared.open(url)
     }
 }
+
+extension ProcessManager {
+    /// Whether something accepts connections on localhost:`port` (IPv4 or IPv6).
+    static func isPortInUse(_ port: Int) -> Bool {
+        for (family, address) in [(AF_INET, "127.0.0.1"), (AF_INET6, "::1")] {
+            let fd = socket(family, SOCK_STREAM, 0)
+            guard fd >= 0 else { continue }
+            defer { close(fd) }
+            var result: Int32 = -1
+            if family == AF_INET {
+                var addr = sockaddr_in()
+                addr.sin_family = sa_family_t(AF_INET)
+                addr.sin_port = in_port_t(UInt16(port).bigEndian)
+                inet_pton(AF_INET, address, &addr.sin_addr)
+                result = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+            } else {
+                var addr = sockaddr_in6()
+                addr.sin6_family = sa_family_t(AF_INET6)
+                addr.sin6_port = in_port_t(UInt16(port).bigEndian)
+                inet_pton(AF_INET6, address, &addr.sin6_addr)
+                result = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in6>.size)) } }
+            }
+            if result == 0 { return true }
+        }
+        return false
+    }
+}

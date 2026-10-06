@@ -57,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         SystemControls.restoreDisplays()
         MainActor.assumeIsolated {
             AppAudio.shared.stopAll()
+            TunnelManager.shared.stopAll()
             ShelfStore.shared.saveNow()
         }
     }

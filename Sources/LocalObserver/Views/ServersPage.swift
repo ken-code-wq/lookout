@@ -480,6 +480,11 @@ struct ServerMenu: View {
     var body: some View {
         Button("Open in Browser") { state.open(server) }
         Button("Copy URL") { state.copy(server.urlString, label: server.urlString) }
+        if TunnelManager.shared.tunnels[server.port] == nil {
+            Button("Share Publicly") { TunnelManager.shared.start(port: server.port) }
+        } else {
+            Button("Stop Sharing") { TunnelManager.shared.stop(port: server.port) }
+        }
         Button("Copy Command") { state.copy(server.command, label: "command") }
         Divider()
         Button("Reveal in Finder") { state.reveal(server) }.disabled(server.workingDirectory.isEmpty)

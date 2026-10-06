@@ -22,6 +22,37 @@ struct LaunchersPage: View {
             .padding(.horizontal, 44)
             .padding(.bottom, 8)
             Rectangle().fill(N.divider).frame(height: 1).padding(.horizontal, 44)
+            let groups = LauncherGroup.groups(state.managed)
+            let clashes = launcherPortClashes(state.managed)
+            if !groups.isEmpty || !clashes.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(groups) { group in
+                        let running = group.launchers.filter { state.isRunning($0) }.count
+                        HStack(spacing: 10) {
+                            FolderIconView(folder: group.root, name: group.name, size: 18)
+                            Text(group.name).font(NFont.bodyMedium).foregroundStyle(N.text)
+                            Text("\(group.launchers.count) launchers · \(running) running").font(NFont.small).foregroundStyle(N.text2)
+                            Spacer()
+                            if running < group.launchers.count {
+                                Button { state.startAll(group) } label: { Label("Start all", systemImage: "play.fill") }
+                                    .buttonStyle(SecondaryButtonStyle())
+                            }
+                            if running > 0 {
+                                Button { state.stopAll(group) } label: { Label("Stop all", systemImage: "stop.fill") }
+                                    .buttonStyle(SecondaryButtonStyle(tint: N.red))
+                            }
+                        }
+                        .help(group.launchers.map(\.name).joined(separator: ", "))
+                    }
+                    ForEach(clashes.keys.sorted(), id: \.self) { port in
+                        Label("\(clashes[port]!.map(\.name).joined(separator: " and ")) both use port \(port); only one can run at a time.",
+                              systemImage: "exclamationmark.triangle")
+                            .font(NFont.small).foregroundStyle(TagColor.orange.fg)
+                    }
+                }
+                .padding(.horizontal, 44)
+                .padding(.vertical, 10)
+            }
 
             if state.managed.isEmpty {
                 EmptyStateView(symbol: "folder.badge.plus", title: "No launchers yet",

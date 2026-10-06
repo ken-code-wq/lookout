@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import LocalObserverCore
 
 /// Notion-style "peek" page for the selected server.
 struct InspectorView: View {
@@ -17,7 +18,9 @@ struct InspectorView: View {
                 Rectangle().fill(N.divider).frame(height: 1).padding(.vertical, 16)
                 properties
                 commandBlock.padding(.top, 18)
+                ShareSection(port: server.port).padding(.top, 18)
                 if let launcher {
+                    RequestLogView(path: launcher.logPath).padding(.top, 18)
                     LogTail(path: launcher.logPath).padding(.top, 18)
                 } else if !server.workingDirectory.isEmpty {
                     Button { state.draftLauncher(from: server) } label: {
@@ -205,7 +208,117 @@ struct LogTail: View {
         if fresh != text { text = fresh }
     }
 
-    private static func stripANSI(_ s: String) -> String {
+    static func stripANSI(_ s: String) -> String {
         s.replacingOccurrences(of: "\u{1B}\\[[0-9;?]*[A-Za-z]", with: "", options: .regularExpression)
+    }
+}
+
+
+/// Sharing a server on a public URL through cloudflared or ngrok.
+struct ShareSection: View {
+    var port: Int
+    @ObservedObject private var tunnels = TunnelManager.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Share").font(.system(size: 12, weight: .medium)).foregroundStyle(N.text2)
+            if let tunnel = tunnels.tunnels[port] {
+                if let url = tunnel.url {
+                    HStack(spacing: 6) {
+                        Circle().fill(N.green).frame(width: 7, height: 7)
+                        Link(url.replacingOccurrences(of: "https://", with: ""), destination: URL(string: url)!)
+                            .font(NFont.small).lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        IconButton(symbol: "doc.on.doc", help: "Copy public URL") { RepoActions.copy(url) }
+                        Button("Stop") { tunnels.stop(port: port) }.buttonStyle(SecondaryButtonStyle(tint: N.red))
+                    }
+                    Text("Anyone with the link can reach this server through \(tunnel.tool) until you stop it or quit Lookout.")
+                        .font(NFont.caption).foregroundStyle(N.text3)
+                } else if let error = tunnel.error {
+                    Text(error).font(NFont.small).foregroundStyle(TagColor.orange.fg).fixedSize(horizontal: false, vertical: true)
+                    Button("Dismiss") { tunnels.stop(port: port) }.buttonStyle(GhostButtonStyle())
+                } else {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Opening a tunnel with \(tunnel.tool)…").font(NFont.small).foregroundStyle(N.text2)
+                        Spacer()
+                        Button("Cancel") { tunnels.stop(port: port) }.buttonStyle(GhostButtonStyle())
+                    }
+                }
+            } else {
+                HStack(spacing: 8) {
+                    Button { tunnels.start(port: port) } label: { Label("Share publicly", systemImage: "globe") }
+                        .buttonStyle(SecondaryButtonStyle())
+                        .disabled(!TunnelManager.isAvailable)
+                    Text(TunnelManager.isAvailable ? "A temporary public URL for :\(port)"
+                         : "Needs cloudflared or ngrok: brew install cloudflared")
+                        .font(NFont.caption).foregroundStyle(N.text3)
+                }
+            }
+        }
+    }
+}
+
+/// Requests a launcher's server has logged: method, path, status, time; errors counted.
+struct RequestLogView: View {
+    var path: String
+    @State private var requests: [ServerRequest] = []
+    @State private var errors = 0
+    @State private var onlyProblems = false
+    private let timer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text("Requests").font(.system(size: 12, weight: .medium)).foregroundStyle(N.text2)
+                if !requests.isEmpty {
+                    let failed = requests.filter(\.isError).count, client = requests.filter(\.isClientError).count
+                    Text("\(requests.count)").font(NFont.caption).foregroundStyle(N.text3)
+                    if failed > 0 { Tag(text: "\(failed) 5xx", color: .red) }
+                    if client > 0 { Tag(text: "\(client) 4xx", color: .orange) }
+                }
+                if errors > 0 { Tag(text: "\(errors) error line\(errors == 1 ? "" : "s")", color: .red) }
+                Spacer()
+                Toggle("Problems only", isOn: $onlyProblems).toggleStyle(.checkbox).font(NFont.caption)
+            }
+            let shown = Array(requests.reversed().filter { !onlyProblems || $0.status >= 400 }.prefix(60))
+            if shown.isEmpty {
+                Text(requests.isEmpty ? "No requests logged yet. Lookout reads them from the server's output." : "No failed requests.")
+                    .font(NFont.caption).foregroundStyle(N.text3)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(shown) { r in
+                        HStack(spacing: 8) {
+                            Text(r.method).font(.system(size: 10.5, weight: .semibold, design: .monospaced)).foregroundStyle(N.text2).frame(width: 52, alignment: .leading)
+                            Text(r.path).font(NFont.monoSmall).foregroundStyle(N.text).lineLimit(1).truncationMode(.middle)
+                            Spacer(minLength: 6)
+                            if let ms = r.milliseconds {
+                                Text(ms >= 1000 ? String(format: "%.1fs", ms / 1000) : "\(Int(ms))ms").font(NFont.monoSmall)
+                                    .foregroundStyle(ms > 1000 ? TagColor.orange.fg : N.text3)
+                            }
+                            Text("\(r.status)").font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(r.isError ? TagColor.red.fg : (r.isClientError ? TagColor.orange.fg : TagColor.green.fg))
+                                .frame(width: 32, alignment: .trailing)
+                        }
+                        .frame(height: 22)
+                    }
+                }
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .background(N.bgSoft, in: RoundedRectangle(cornerRadius: N.radius, style: .continuous))
+            }
+        }
+        .onAppear(perform: load)
+        .onReceive(timer) { _ in load() }
+    }
+
+    private func load() {
+        guard let handle = FileHandle(forReadingAtPath: path) else { return }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        try? handle.seek(toOffset: size > 200_000 ? size - 200_000 : 0)
+        let text = LogTail.stripANSI(String(decoding: (try? handle.readToEnd()) ?? Data(), as: UTF8.self))
+        let parsed = ServerRequest.parse(text)
+        if parsed != requests { requests = parsed }
+        errors = ServerRequest.errorLines(text).count
     }
 }
