@@ -10,6 +10,7 @@ enum ReplayChecks {
         checkDiff()
         checkBudgets()
         checkLogParsing()
+        checkRequestParsing()
     }
 
     /// `REPLAY_PROBE=/path/to/transcript.jsonl`: what a replay of a real session contains.
@@ -96,6 +97,25 @@ enum ReplayChecks {
         precondition(GHLogLine.excerpt(lines, context: 1).hasPrefix("Retrying"), "Excerpt starts just before the first error")
         precondition(GHRunStatus(status: "completed", conclusion: "timed_out") == .failure
                      && GHRunStatus(status: "in_progress", conclusion: nil) == .running, "Run status mapping")
+    }
+
+    /// Dev servers' request lines, one per framework.
+    private static func checkRequestParsing() {
+        let log = """
+         GET /api/users 200 in 23ms
+        GET /assets/app.js 304 1.204 ms - -
+        [06/Oct/2026 10:00:00] "POST /login HTTP/1.1" 302 0
+        INFO:     127.0.0.1:52344 - "GET /items/5 HTTP/1.1" 404 Not Found
+        Started GET "/posts" for 127.0.0.1 at 2026-10-06 10:00:00
+        Completed 500 Internal Server Error in 41ms (ActiveRecord: 3.1ms)
+        compiled successfully in 1200ms
+        TypeError: Cannot read properties of undefined (reading 'id')
+        """
+        let requests = ServerRequest.parse(log)
+        precondition(requests.map(\.status) == [200, 304, 302, 404, 500], "Statuses: \(requests.map(\.status))")
+        precondition(requests.map(\.path) == ["/api/users", "/assets/app.js", "/login", "/items/5", "/posts"], "Paths: \(requests.map(\.path))")
+        precondition(requests[0].milliseconds == 23 && requests[4].milliseconds == 41 && requests[4].isError, "Timing and errors")
+        precondition(ServerRequest.errorLines(log).count == 1, "Error lines: \(ServerRequest.errorLines(log))")
     }
 
     private static func checkDiff() {

@@ -477,7 +477,14 @@ final class AppState: ObservableObject {
     func start(_ launcher: ManagedServer) {
         if let port = launcher.port, let owner = servers.first(where: { $0.port == port }) {
             show(Toast(message: "Port \(port) is taken by \(owner.projectName)", symbol: "exclamationmark.triangle",
-                       tone: .danger, actionTitle: "Stop it") { [weak self] in self?.stop(owner) })
+                       tone: .danger, actionTitle: "Stop it and start") { [weak self] in
+                self?.stop(owner)
+                // Give the old process a moment to let go of the port.
+                Task { @MainActor [weak self] in
+                    for _ in 0..<40 where ProcessManager.isPortInUse(port) { try? await Task.sleep(for: .milliseconds(150)) }
+                    self?.start(launcher)
+                }
+            })
             return
         }
         do {
@@ -491,6 +498,17 @@ final class AppState: ObservableObject {
         } catch {
             show(Toast(message: error.localizedDescription, symbol: "exclamationmark.triangle", tone: .danger))
         }
+    }
+
+    /// Starts every launcher of a project that isn't running yet.
+    func startAll(_ group: LauncherGroup) {
+        let idle = group.launchers.filter { !isRunning($0) }
+        for launcher in idle { start(launcher) }
+        if idle.count > 1 { show(Toast(message: "Starting \(idle.count) launchers for \(group.name)…", symbol: "play.circle", tone: .success)) }
+    }
+
+    func stopAll(_ group: LauncherGroup) {
+        for launcher in group.launchers where isRunning(launcher) { stop(launcher) }
     }
 
     func stop(_ launcher: ManagedServer) {
