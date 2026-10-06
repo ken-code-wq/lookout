@@ -5,7 +5,7 @@ import LocalObserverCore
 
 /// Transient drop-down from the notch, e.g. "Claude Code needs you".
 struct NotchAlert: Equatable, Identifiable {
-    enum Kind { case needsYou, failed, finished, limit, reset }
+    enum Kind { case needsYou, failed, finished, limit, reset, checksFailed, checksPassed, review }
     var id: String
     var kind: Kind
     var agent: AgentKind?
@@ -13,6 +13,10 @@ struct NotchAlert: Equatable, Identifiable {
     var detail: String
     var badge: String
     var sessionID: String?
+    /// SF Symbol shown where an agent's icon would be, for alerts that aren't about an agent.
+    var symbol: String? = nil
+    /// Opened when the alert is clicked, instead of jumping to a session.
+    var url: String? = nil
 }
 
 /// Borderless panel that leaves keyboard focus with the app you're working in. While open it may take it, but only
@@ -111,6 +115,16 @@ final class NotchController: ObservableObject {
         MediaController.shared.start()
         KeepAwake.shared.attach(to: agentStore)
         rebuild()
+        #if DEBUG
+        // `LOCAL_OBSERVER_DEBUG_ALERT=1`: drop a sample alert shortly after launch, to look at the alert's styling.
+        if ProcessInfo.processInfo.environment["LOCAL_OBSERVER_DEBUG_ALERT"] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+                self?.show(NotchAlert(id: "debug", kind: .needsYou, agent: .claude, title: "t3-bb129d76",
+                                      detail: "Claude is waiting for you: Projects tasks page created by me filter",
+                                      badge: "Needs approval", sessionID: nil), seconds: 8)
+            }
+        }
+        #endif
     }
 
     // MARK: Placement

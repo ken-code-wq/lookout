@@ -28,6 +28,12 @@ let package = Package(
             name: "LocalObserverShelf",
             path: "Sources/LocalObserverShelf"
         ),
+        // Repos: git repositories, worktrees and pull requests. Uses Core only for its git checkout reader.
+        .target(
+            name: "LocalObserverRepos",
+            dependencies: ["LocalObserverCore"],
+            path: "Sources/LocalObserverRepos"
+        ),
         // Widget views, shared by the extension and the app's debug snapshot harness.
         .target(
             name: "LocalObserverWidgetUI",
@@ -36,7 +42,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "LocalObserver",
-            dependencies: ["LocalObserverCore", "LocalObserverWidgetUI", "LocalObserverShelf"],
+            dependencies: ["LocalObserverCore", "LocalObserverWidgetUI", "LocalObserverShelf", "LocalObserverRepos"],
             path: "Sources/LocalObserver"
         ),
         // WidgetKit extension. SwiftPM builds the executable; packaging/build-app.sh wraps it in an .appex.
@@ -55,7 +61,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "LocalObserverVerification",
-            dependencies: ["LocalObserverCore", "LocalObserverShelf"],
+            dependencies: ["LocalObserverCore", "LocalObserverShelf", "LocalObserverRepos"],
             path: "Sources/LocalObserverVerification"
         )
     ]
