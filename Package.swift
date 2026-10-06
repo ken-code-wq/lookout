@@ -14,6 +14,10 @@ let package = Package(
         // Loaded by /usr/bin/perl, not linked into the app. See Sources/NowPlayingBridge.
         .library(name: "NowPlayingBridge", type: .dynamic, targets: ["NowPlayingBridge"])
     ],
+    // Auto-updates. Exact version so a release build never picks up a new Sparkle unannounced.
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.6")
+    ],
     targets: [
         .target(
             name: "NowPlayingBridge",
@@ -64,7 +68,7 @@ let package = Package(
         .executableTarget(
             name: "LocalObserver",
             dependencies: ["LocalObserverCore", "LocalObserverWidgetUI", "LocalObserverShelf", "LocalObserverRepos", "LocalObserverDisk",
-                           "LocalObserverHooks"],
+                           "LocalObserverHooks", .product(name: "Sparkle", package: "Sparkle")],
             path: "Sources/LocalObserver"
         ),
         // WidgetKit extension. SwiftPM builds the executable; packaging/build-app.sh wraps it in an .appex.

@@ -157,7 +157,7 @@ final class LiveSurfaces: NSObject, NSWindowDelegate {
         case .refresh:
             state.refresh()
             agentStore.refresh(forceLimits: true)
-        case .checkForUpdates: NSSound.beep()
+        case .checkForUpdates: Updater.shared.checkForUpdates()
         }
     }
 

@@ -50,5 +50,13 @@
     <string></string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <!-- Sparkle. The appcast is committed to main and served raw by GitHub (see packaging/release.sh). -->
+    <key>SUFeedURL</key>
+    <string>https://raw.githubusercontent.com/ken-code-wq/lookout/main/appcast.xml</string>
+    <!-- Filled in by build-app.sh from LOOKOUT_SPARKLE_PUBLIC_KEY; left empty, the updater stays off. -->
+    <key>SUPublicEDKey</key>
+    <string></string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
 </dict>
 </plist>

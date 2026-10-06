@@ -85,6 +85,9 @@ struct MenuBarView: View {
                     state.draft = LauncherDraft()
                 }
                 Rectangle().fill(Color.primary.opacity(0.1)).frame(width: 1, height: 16).padding(.horizontal, 3)
+                if Updater.shared.isAvailable {
+                    MenuFooterButton(symbol: "arrow.down.circle", help: "Check for Updates…") { Updater.shared.checkForUpdates() }
+                }
                 MenuFooterButton(symbol: "power", help: "Quit Lookout (⌘Q)", shortcut: "q") { NSApp.terminate(nil) }
             }
             .padding(.horizontal, 8)

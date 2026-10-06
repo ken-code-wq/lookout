@@ -27,6 +27,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             RepoNotifier.shared.attach(to: RepoStore.shared)
         }
         if AgentNotifier.isAvailable { UNUserNotificationCenter.current().delegate = self }
+        // Starts Sparkle's scheduled checks when this build can update itself.
+        MainActor.assumeIsolated { _ = Updater.shared }
     }
 
     /// Clicking a pull request notification opens it on GitHub; any other brings Lookout forward.
@@ -84,6 +86,7 @@ struct LocalObserverApp: App {
         .defaultSize(width: 1280, height: 800)
         .windowToolbarStyle(.unified)
         .commands {
+            CommandGroup(after: .appInfo) { CheckForUpdatesButton() }
             CommandGroup(replacing: .newItem) {
                 Button("New Server…") { state.draft = LauncherDraft() }
                     .keyboardShortcut("n")

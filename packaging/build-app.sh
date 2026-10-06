@@ -10,6 +10,18 @@ cp .build/release/LocalObserver "$APP/Contents/MacOS/LocalObserver"
 # executable so the path written into agents' configs stays put across rebuilds.
 cp .build/release/lookout-hook "$APP/Contents/MacOS/lookout-hook"
 cp packaging/Info.plist "$APP/Contents/Info.plist"
+# Sparkle: the framework sits in Contents/Frameworks, where the app looks for it at runtime.
+install_name_tool -add_rpath @executable_path/../Frameworks "$APP/Contents/MacOS/LocalObserver"
+rm -rf "$APP/Contents/Frameworks/Sparkle.framework"
+mkdir -p "$APP/Contents/Frameworks"
+ditto .build/release/Sparkle.framework "$APP/Contents/Frameworks/Sparkle.framework"
+# The updater only runs with the EdDSA public key that verifies updates (printed by Sparkle's generate_keys).
+# Without one it stays off; see Sources/LocalObserver/Core/Updater.swift.
+if [[ -n "${LOOKOUT_SPARKLE_PUBLIC_KEY:-}" ]]; then
+  /usr/libexec/PlistBuddy -c "Set :SUPublicEDKey $LOOKOUT_SPARKLE_PUBLIC_KEY" "$APP/Contents/Info.plist"
+else
+  echo "note: LOOKOUT_SPARKLE_PUBLIC_KEY isn't set, so this build won't update itself"
+fi
 # Rendered from packaging/icon/make-icon.swift.
 cp packaging/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # Agent icons live in the core module's resource bundle.
@@ -37,6 +49,7 @@ packaging/appintents-metadata.sh "$APP" || echo "warning: App Intents metadata s
 IDENTITY=$(security find-identity -p codesigning | awk -F'"' '/Lookout Local Signing/ { print $2; exit }')
 [[ -z "$IDENTITY" ]] && { echo "warning: no 'Lookout Local Signing' identity, signing ad-hoc (widgets won't appear)"; IDENTITY=-; }
 # Inside out: the helper and the extension (with its sandbox entitlements) first, then the app around them.
+packaging/sign-sparkle.sh "$APP/Contents/Frameworks/Sparkle.framework" "$IDENTITY"
 codesign --force --sign "$IDENTITY" "$APP/Contents/MacOS/lookout-hook"
 codesign --force --sign "$IDENTITY" "$APP/Contents/Helpers/lookout"
 codesign --force --sign "$IDENTITY" --entitlements packaging/Widgets.entitlements "$APPEX"

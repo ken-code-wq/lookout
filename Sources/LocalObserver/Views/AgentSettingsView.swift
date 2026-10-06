@@ -572,6 +572,7 @@ private struct GeneralPane: View {
                     .labelsHidden().fixedSize()
                 }
             }
+            UpdateSettingsSection()
             Text("Notifications").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.top, 22).padding(.bottom, 8)
             SettingsGroup {
                 SettingsRow(title: "When an agent needs you", detail: "A session is waiting for permission or an answer") {
