@@ -23,6 +23,8 @@ struct AgentSettingsView: View {
                 .tabItem { Label("Shelf", systemImage: "tray.full") }
             GeneralPane(store: store)
                 .tabItem { Label("General", systemImage: "gearshape") }
+            AutomationSettingsPane()
+                .tabItem { Label("Automation", systemImage: "terminal") }
         }
         .frame(width: 620, height: 560)
     }
@@ -570,6 +572,7 @@ private struct GeneralPane: View {
                     .labelsHidden().fixedSize()
                 }
             }
+            UpdateSettingsSection()
             Text("Notifications").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.top, 22).padding(.bottom, 8)
             SettingsGroup {
                 SettingsRow(title: "When an agent needs you", detail: "A session is waiting for permission or an answer") {

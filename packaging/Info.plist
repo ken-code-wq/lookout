@@ -28,6 +28,7 @@
             <key>CFBundleURLSchemes</key>
             <array>
                 <string>localobserver</string>
+                <string>lookout</string>
             </array>
         </dict>
     </array>
@@ -40,7 +41,7 @@
     <key>LSMinimumSystemVersion</key>
     <string>14.2</string>
     <key>NSAppleEventsUsageDescription</key>
-    <string>Lookout shows what's playing in Spotify or Music in the notch and lets you pause or skip, and sends your quick replies to an agent's tab in Terminal or iTerm2.</string>
+    <string>Lookout shows what's playing in Spotify or Music in the notch and lets you pause or skip, brings an agent's Terminal or iTerm2 tab forward when you jump to it, and sends your quick replies there.</string>
     <key>NSAudioCaptureUsageDescription</key>
     <string>Lookout captures an app's audio only to change its volume or send it to a different output, like a per-app mixer. Nothing is recorded.</string>
     <key>NSHighResolutionCapable</key>
@@ -49,5 +50,13 @@
     <string></string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <!-- Sparkle. The appcast is committed to main and served raw by GitHub (see packaging/release.sh). -->
+    <key>SUFeedURL</key>
+    <string>https://raw.githubusercontent.com/ken-code-wq/lookout/main/appcast.xml</string>
+    <!-- Filled in by build-app.sh from LOOKOUT_SPARKLE_PUBLIC_KEY; left empty, the updater stays off. -->
+    <key>SUPublicEDKey</key>
+    <string></string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
 </dict>
 </plist>

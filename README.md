@@ -71,7 +71,7 @@ If you run Claude Code, Codex, Cursor and friends side by side, you end up alt-t
 
 1. Download `Lookout.zip` from the [latest release](https://github.com/ken-code-wq/lookout/releases/latest) and unzip it.
 2. Move `Lookout.app` to `/Applications`.
-3. The build is not notarized by Apple, so macOS will block the first launch. Clear the quarantine flag once:
+3. Check the release notes: releases marked **notarized** open normally, and you can skip this step. For builds that aren't notarized by Apple, macOS will block the first launch. Clear the quarantine flag once:
 
    ```bash
    xattr -dr com.apple.quarantine /Applications/Lookout.app
@@ -81,7 +81,32 @@ If you run Claude Code, Codex, Cursor and friends side by side, you end up alt-t
 
 Requires macOS 14.2 or later on Apple Silicon.
 
-Desktop widgets need a build signed with a real certificate, so they won't appear in the prebuilt release. Build from source to use them.
+Desktop widgets need a build signed with a real certificate, so they won't appear in a prebuilt release that isn't notarized. Build from source to use them.
+
+Releases with update signing turned on keep themselves current through Sparkle: **Lookout › Check for Updates…**, with automatic checks in Settings › General.
+
+## Automation
+
+Lookout can be driven from scripts, [Raycast](https://www.raycast.com) and Shortcuts.
+
+**Command-line tool.** Settings › Automation › **Install command-line tool** links `lookout` into `/usr/local/bin` (or `~/.local/bin` when that isn't writable, and tells you which).
+
+```bash
+lookout status --json          # agents, plan limits, servers and today's usage
+lookout agents                 # running sessions and their state
+lookout limits                 # every plan-limit window and what's left
+lookout open usage             # dashboard, sessions, usage, limits, repos, servers, launchers…
+lookout launcher start web     # start, stop or toggle a saved launcher by name
+lookout timer 25               # focus timer; `lookout awake toggle` for keep-awake
+```
+
+It reads the snapshot Lookout already writes for its desktop widgets, so it's instant and never scans anything itself. Actions go to the app through `lookout://` links.
+
+**Links.** `lookout://open/<page>`, `lookout://launcher/<name>/start|stop|toggle`, `lookout://palette`, `lookout://new-task`, `lookout://weekly-report`, `lookout://keep-awake/on|off|toggle`, `lookout://timer/start/<minutes>`, `lookout://timer/stop`, `lookout://refresh`. Open them from anywhere: `open lookout://open/limits`.
+
+**Raycast.** Make a [script command](https://github.com/raycast/script-commands) that runs `lookout limits` (with `@raycast.mode fullOutput`) or `lookout launcher toggle web` (`@raycast.mode silent`).
+
+**Shortcuts.** Use a **Run Shell Script** action with `lookout status --json` and parse it with **Get Dictionary from Input**, or an **Open URLs** action with a `lookout://` link. Builds packaged with Xcode installed also expose native Shortcuts actions (agents needing attention, plan limit left, launchers, pages, keep-awake, focus timer); Settings › Automation says whether yours has them.
 
 ## Build from source
 
@@ -96,6 +121,8 @@ swift run LocalObserverVerification  # parsing and core checks
 ```
 
 For widgets and stable privacy permissions across rebuilds, create a local signing identity first with `packaging/make-signing-cert.sh`.
+
+To cut a release, `packaging/release.sh` builds, notarizes when a Developer ID is available (`packaging/notarize.sh`), zips, signs the zip for Sparkle and updates `appcast.xml`. It publishes nothing; it prints the upload and push steps. One-time setup is described at the top of each script.
 
 Regenerate the README screenshots from demo data:
 
@@ -115,6 +142,8 @@ LOCAL_OBSERVER_SNAPSHOT_DEMO=1 LOCAL_OBSERVER_SNAPSHOT_DIR=/tmp/shots .build/deb
 Everything runs on your Mac. There are no analytics, accounts or servers of ours.
 
 The only network requests are the optional plan-limit checks, which call each provider's own usage endpoint (Anthropic, OpenAI, GitHub, Cursor) with credentials already on your machine. They're off until you enable them per agent in Settings.
+
+Builds that update themselves also fetch `appcast.xml` from this repository on GitHub about once a day to look for a new version. Turn that off in Settings › General › Updates.
 
 Costs are estimates based on public API prices; subscription plans bill differently.
 

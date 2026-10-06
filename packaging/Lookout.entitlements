@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Used only by packaging/notarize.sh, which signs with the hardened runtime. Local builds aren't hardened
+         and don't need these. The app isn't sandboxed.
+
+         Apple Events: Now Playing falls back to scripting Spotify and Music, and jumping to a session scripts
+         Terminal and iTerm. Under the hardened runtime, sending Apple Events without this fails with -1743
+         and macOS never even asks. The prompt text is NSAppleEventsUsageDescription in Info.plist. -->
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+    <!-- Audio: the per-app mixer taps other apps' audio with Core Audio process taps (AppAudio), behind the
+         NSAudioCaptureUsageDescription prompt. The hardened runtime gates audio input; this declares it so a
+         tap isn't silently refused. It doesn't grant microphone access on its own (that's a separate TCC
+         prompt Lookout never triggers). -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <!-- Deliberately absent: com.apple.security.cs.disable-library-validation. The app only loads Apple
+         frameworks and Sparkle.framework, which notarize.sh signs with the same Team ID, so library validation
+         passes. libNowPlayingBridge.dylib is never loaded by Lookout; /usr/bin/perl loads it in its own
+         process, where Lookout's entitlements don't apply. -->
+</dict>
+</plist>
