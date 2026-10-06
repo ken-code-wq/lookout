@@ -108,6 +108,9 @@ public final class GitHubStore: ObservableObject {
     /// Keyed `slug#number`.
     @Published public private(set) var issues: [String: GHIssueDetail] = [:]
     @Published public private(set) var notifications: [GHNotification] = []
+    /// Contribution graphs, keyed by year (0 for the last twelve months).
+    @Published public private(set) var contributions: [Int: GHContributionYear] = [:]
+    @Published public private(set) var contributionDetails: [String: GHContributionDetail] = [:]
     @Published public private(set) var lastNotifications: Date?
     /// Inbox shows read ones from the last week too.
     @Published public var showReadNotifications = false {
@@ -257,6 +260,29 @@ public final class GitHubStore: ObservableObject {
         case nil: return loading.contains(Self.repositoriesKey)
         case .repo(let slug, _), .pull(let slug, _), .issue(let slug, _): return loading.contains { $0.contains(slug) }
         }
+    }
+
+    // MARK: Contributions
+
+    public static func contributionsKey(_ year: Int?) -> String { "contributions:\(year ?? 0)" }
+
+    public func loadContributions(year: Int?, force: Bool = false) {
+        load(Self.contributionsKey(year), force: force, store: { s, v in s.contributions[year ?? 0] = v }) {
+            GitHubAPI.contributions(year: year)
+        }
+    }
+
+    public func loadContributionDetail(_ date: String) {
+        guard contributionDetails[date] == nil else { return }
+        load("contribution:" + date, force: false, store: { s, v in s.contributionDetails[date] = v }) {
+            GitHubAPI.contributionDetail(date: date)
+        }
+    }
+
+    public func loadDemoContributions(_ year: GHContributionYear, details: [String: GHContributionDetail] = [:]) {
+        isDemo = true
+        contributions[0] = year
+        contributionDetails = details
     }
 
     // MARK: Review comments
