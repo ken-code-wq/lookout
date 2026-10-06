@@ -576,6 +576,26 @@ enum SnapshotDemo {
                        openPulls: [slug: open], closedPulls: [slug: closed],
                        commits: [GitHubStore.commitsKey(slug, branch: "main"): mainCommits],
                        pulls: [pull], files: [GitHubStore.filesKey(slug, 214): files])
+        let issues = [
+            GHIssueSummary(repo: slug, number: 231, title: "Search returns stale results after tenant config change", state: .open, author: "sam",
+                           labels: [GHLabel(name: "bug", color: "d73a4a"), GHLabel(name: "cache", color: "c5def5")], comments: 4,
+                           assignees: ["dev"], createdAt: ago(2 * day), updatedAt: ago(3 * hour)),
+            GHIssueSummary(repo: slug, number: 228, title: "Expose rate limit headers on every response", state: .open, author: "rin",
+                           labels: [GHLabel(name: "enhancement", color: "a2eeef")], comments: 1, createdAt: ago(5 * day), updatedAt: ago(1 * day)),
+            GHIssueSummary(repo: slug, number: 187, title: "Rate limit /search per tenant", state: .open, author: "dev",
+                           labels: [GHLabel(name: "api", color: "0e8a16")], comments: 6, assignees: ["dev", "sam"], createdAt: ago(20 * day), updatedAt: ago(6 * hour)),
+        ]
+        let issueDetail = GHIssueDetail(summary: issues[0],
+            bodyHTML: "<p>After changing a tenant's ranking config, <code>/search</code> keeps returning the old order for up to an hour.</p><p>Steps: update config, search, compare.</p>",
+            timeline: [GHTimelineItem(id: "i1", kind: .comment, author: "dev", bodyHTML: "<p>The cache key doesn't include the config version. Fix incoming.</p>", date: ago(3 * hour))])
+        let notes = [
+            GHNotification(id: "n1", repo: slug, title: "Move tenant config to Postgres", kind: .pullRequest, reason: "review_requested", unread: true, updatedAt: ago(50 * 60), number: 219),
+            GHNotification(id: "n2", repo: slug, title: "Search returns stale results after tenant config change", kind: .issue, reason: "assign", unread: true, updatedAt: ago(3 * hour), number: 231),
+            GHNotification(id: "n3", repo: "acme/pixel-garden", title: "Tests workflow run failed for fix/flaky-auth", kind: .checkSuite, reason: "ci_activity", unread: true, updatedAt: ago(20 * 60)),
+            GHNotification(id: "n4", repo: "acme/orbit-cli", title: "v2.4.0", kind: .release, reason: "subscribed", unread: true, updatedAt: ago(5 * hour)),
+            GHNotification(id: "n5", repo: "acme/lumen-docs", title: "Dark mode for settings", kind: .pullRequest, reason: "mention", unread: false, updatedAt: ago(day), number: 41),
+        ]
+        store.loadDemoInbox(notifications: notes, issues: [slug: issues], details: [issueDetail])
     }
 
     // MARK: - Audio

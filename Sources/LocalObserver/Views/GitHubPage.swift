@@ -19,6 +19,8 @@ struct GitHubPage: View {
                 GHRepoView(store: store, repos: repos, slug: slug, tab: tab)
             case .pull(let slug, let number):
                 GHPullView(store: store, repos: repos, agents: agents, slug: slug, number: number)
+            case .issue(let slug, let number):
+                GHIssueView(store: store, slug: slug, number: number)
             }
         }
         // Loads once signed in; while GitHub is off or gh is missing, the status banner says why the page is empty.
@@ -86,6 +88,11 @@ struct GHBreadcrumb: View {
                 case .pull(let slug, let number):
                     separator
                     crumb("Pull requests", current: false) { open(.repo(slug, .pulls)) }
+                    separator
+                    crumb("#\(number)", current: true) {}
+                case .issue(let slug, let number):
+                    separator
+                    crumb("Issues", current: false) { open(.repo(slug, .issues)) }
                     separator
                     crumb("#\(number)", current: true) {}
                 default:

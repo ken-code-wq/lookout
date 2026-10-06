@@ -31,6 +31,7 @@ struct GHRepoView: View {
         store.loadDetail(slug)
         switch tab {
         case .code: store.loadBranches(slug)
+        case .issues: store.loadIssues(slug, open: true); store.loadIssues(slug, open: false)
         case .pulls: store.loadPulls(slug, open: true); store.loadPulls(slug, open: false)
         case .branches: store.loadBranches(slug)
         case .commits: store.loadBranches(slug)
@@ -39,6 +40,7 @@ struct GHRepoView: View {
 
     private func count(_ tab: GHRepoTab) -> Int? {
         switch tab {
+        case .issues: return store.openIssues[slug]?.count ?? repo?.openIssues
         case .pulls: return store.openPulls[slug]?.count ?? repo?.openPulls
         case .branches: return store.branches[slug]?.count
         default: return nil
@@ -78,6 +80,7 @@ struct GHRepoView: View {
     private var urlSuffix: String {
         switch tab {
         case .code: return ""
+        case .issues: return "issues"
         case .pulls: return "pulls"
         case .branches: return "branches"
         case .commits: return "commits"
@@ -102,6 +105,7 @@ struct GHRepoView: View {
         }
         switch tab {
         case .code: GHCodeTab(store: store, repos: repos, slug: slug, width: width)
+        case .issues: GHIssuesTab(store: store, slug: slug)
         case .pulls: GHPullsTab(store: store, slug: slug)
         case .branches: GHBranchesTab(store: store, repos: repos, slug: slug)
         case .commits: GHCommitsTab(store: store, slug: slug)

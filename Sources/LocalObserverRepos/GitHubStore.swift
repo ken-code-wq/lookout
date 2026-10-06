@@ -5,16 +5,18 @@ import Combine
 public enum GHRoute: Hashable, Sendable {
     case repo(String, GHRepoTab)
     case pull(String, Int)
+    case issue(String, Int)
 
     public var slug: String {
         switch self {
-        case .repo(let slug, _), .pull(let slug, _): return slug
+        case .repo(let slug, _), .pull(let slug, _), .issue(let slug, _): return slug
         }
     }
 }
 
 public enum GHRepoTab: String, CaseIterable, Identifiable, Sendable {
     case code = "Code"
+    case issues = "Issues"
     case pulls = "Pull requests"
     case branches = "Branches"
     case commits = "Commits"
@@ -23,6 +25,7 @@ public enum GHRepoTab: String, CaseIterable, Identifiable, Sendable {
     public var symbol: String {
         switch self {
         case .code: return "chevron.left.forwardslash.chevron.right"
+        case .issues: return "smallcircle.filled.circle"
         case .pulls: return "arrow.triangle.pull"
         case .branches: return "arrow.triangle.branch"
         case .commits: return "clock.arrow.circlepath"
@@ -98,6 +101,16 @@ public final class GitHubStore: ObservableObject {
     /// Keyed `slug#number`.
     @Published public private(set) var pulls: [String: GHPullDetail] = [:]
     @Published public private(set) var files: [String: [GHFile]] = [:]
+    @Published public private(set) var openIssues: [String: [GHIssueSummary]] = [:]
+    @Published public private(set) var closedIssues: [String: [GHIssueSummary]] = [:]
+    /// Keyed `slug#number`.
+    @Published public private(set) var issues: [String: GHIssueDetail] = [:]
+    @Published public private(set) var notifications: [GHNotification] = []
+    @Published public private(set) var lastNotifications: Date?
+    /// Inbox shows read ones from the last week too.
+    @Published public var showReadNotifications = false {
+        didSet { if showReadNotifications != oldValue { loadNotifications(force: true) } }
+    }
 
     /// Load keys with a request in flight.
     @Published public private(set) var loading: Set<String> = []
@@ -130,6 +143,9 @@ public final class GitHubStore: ObservableObject {
     public static func pullKey(_ slug: String, _ number: Int) -> String { "\(slug)#\(number)" }
     public static func filesKey(_ slug: String, _ number: Int) -> String { "files:\(slug)#\(number)" }
     static let repositoriesKey = "repositories"
+    public static func issuesKey(_ slug: String, open: Bool) -> String { "issues:\(slug):\(open ? "open" : "closed")" }
+    public static func issueKey(_ slug: String, _ number: Int) -> String { "issue:\(slug)#\(number)" }
+    public static let notificationsKey = "notifications"
 
     public func isLoading(_ key: String) -> Bool { loading.contains(key) }
     public func error(_ key: String) -> String? { errors[key] }
@@ -220,6 +236,7 @@ public final class GitHubStore: ObservableObject {
             loadDetail(slug, force: true)
             switch tab {
             case .code: break
+            case .issues: loadIssues(slug, open: true, force: true); loadIssues(slug, open: false, force: true)
             case .pulls: loadPulls(slug, open: true, force: true); loadPulls(slug, open: false, force: true)
             case .branches: loadBranches(slug, force: true)
             case .commits: loadCommits(slug, branch: defaultBranch(slug), force: true)
@@ -227,13 +244,100 @@ public final class GitHubStore: ObservableObject {
         case .pull(let slug, let number):
             loadPull(slug, number, force: true)
             loadFiles(slug, number, force: true)
+        case .issue(let slug, let number):
+            loadIssue(slug, number, force: true)
         }
     }
 
     public var isLoadingCurrent: Bool {
         switch route {
         case nil: return loading.contains(Self.repositoriesKey)
-        case .repo(let slug, _), .pull(let slug, _): return loading.contains { $0.contains(slug) }
+        case .repo(let slug, _), .pull(let slug, _), .issue(let slug, _): return loading.contains { $0.contains(slug) }
+        }
+    }
+
+    // MARK: Issues
+
+    public func loadIssues(_ slug: String, open: Bool, force: Bool = false) {
+        load(Self.issuesKey(slug, open: open), force: force, store: { s, v in
+            if open { s.openIssues[slug] = v } else { s.closedIssues[slug] = v }
+        }) { GitHubAPI.issues(slug, open: open) }
+    }
+
+    public func loadIssue(_ slug: String, _ number: Int, force: Bool = false) {
+        let key = Self.issueKey(slug, number)
+        load(key, force: force, store: { s, v in s.issues[key] = v }) { GitHubAPI.issue(slug, number: number) }
+    }
+
+    public func issue(_ slug: String, _ number: Int) -> GHIssueDetail? { issues[Self.issueKey(slug, number)] }
+
+    private func reloadIssue(_ slug: String, _ number: Int) -> (GitHubStore) -> Void {
+        { s in
+            s.loadIssue(slug, number, force: true)
+            s.loadIssues(slug, open: true, force: true)
+            s.loadIssues(slug, open: false, force: true)
+        }
+    }
+
+    public func commentIssue(_ slug: String, _ number: Int, body: String) {
+        act(Self.issueKey(slug, number), success: "Commented on #\(number)", then: reloadIssue(slug, number)) {
+            GitHubAPI.commentIssue(slug, number: number, body: body)
+        }
+    }
+
+    public func closeIssue(_ slug: String, _ number: Int, notPlanned: Bool) {
+        act(Self.issueKey(slug, number), success: "Closed #\(number)", then: reloadIssue(slug, number)) {
+            GitHubAPI.closeIssue(slug, number: number, notPlanned: notPlanned)
+        }
+    }
+
+    public func reopenIssue(_ slug: String, _ number: Int) {
+        act(Self.issueKey(slug, number), success: "Reopened #\(number)", then: reloadIssue(slug, number)) {
+            GitHubAPI.reopenIssue(slug, number: number)
+        }
+    }
+
+    public func createIssue(_ slug: String, title: String, body: String) {
+        act("issues:\(slug):new", success: "Opened an issue in \(slug)", then: { s in s.loadIssues(slug, open: true, force: true) }) {
+            GitHubAPI.createIssue(slug, title: title, body: body)
+        }
+    }
+
+    // MARK: Notifications
+
+    public func loadNotifications(force: Bool = false) {
+        let all = showReadNotifications
+        load(Self.notificationsKey, force: force, store: { s, v in s.notifications = v; s.lastNotifications = Date() }) {
+            GitHubAPI.notifications(all: all)
+        }
+    }
+
+    public var unreadNotifications: Int { notifications.filter(\.unread).count }
+
+    /// Marks one read at once in the list, then tells GitHub.
+    public func markRead(_ notification: GHNotification) {
+        guard notification.unread else { return }
+        if let i = notifications.firstIndex(where: { $0.id == notification.id }) {
+            if showReadNotifications { notifications[i].unread = false } else { notifications.remove(at: i) }
+        }
+        guard !isDemo else { return }
+        Task.detached(priority: .utility) { _ = GitHubAPI.markRead(notification.id) }
+    }
+
+    public func markAllRead() {
+        if showReadNotifications { for i in notifications.indices { notifications[i].unread = false } } else { notifications = [] }
+        guard !isDemo else { return }
+        act("notifications:all", success: "Marked everything read", then: { _ in }) { GitHubAPI.markAllRead() }
+    }
+
+    /// Opens a notification's pull request or issue in the GitHub page, marking it read.
+    public func open(_ notification: GHNotification) -> Bool {
+        markRead(notification)
+        guard let number = notification.number else { return false }
+        switch notification.kind {
+        case .pullRequest: path = [.repo(notification.repo, .pulls), .pull(notification.repo, number)]; return true
+        case .issue: path = [.repo(notification.repo, .issues), .issue(notification.repo, number)]; return true
+        default: return false
         }
     }
 
@@ -363,6 +467,14 @@ public final class GitHubStore: ObservableObject {
     // MARK: Demo
 
     /// Debug/demo: shows this data and never touches GitHub. Actions report success without doing anything.
+    public func loadDemoInbox(notifications: [GHNotification], issues: [String: [GHIssueSummary]], details: [GHIssueDetail]) {
+        isDemo = true
+        self.notifications = notifications
+        openIssues = issues
+        self.issues = Dictionary(uniqueKeysWithValues: details.map { (Self.issueKey($0.summary.repo, $0.summary.number), $0) })
+        lastNotifications = Date()
+    }
+
     public func loadDemo(repositories: [GHRepository], details: [String: GHRepoDetail], branches: [String: [GHBranch]],
                          openPulls: [String: [GHPullSummary]], closedPulls: [String: [GHPullSummary]],
                          commits: [String: [GHCommit]], pulls: [GHPullDetail], files: [String: [GHFile]]) {

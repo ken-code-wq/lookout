@@ -29,7 +29,12 @@ final class CICoordinator {
                     .sorted { ($0.lastTouched ?? .distantPast) > ($1.lastTouched ?? .distantPast) }
                     .compactMap(\.github)
                 ci.watch(Array(slugs.prefix(12)))
+                GitHubStore.shared.loadNotifications()
             }
+            .store(in: &cancellables)
+        // The inbox count in the sidebar: every five minutes is plenty for notifications.
+        Timer.publish(every: 300, tolerance: 60, on: .main, in: .common).autoconnect()
+            .sink { _ in if RepoStore.shared.gitHub.login != nil { GitHubStore.shared.loadNotifications() } }
             .store(in: &cancellables)
     }
 

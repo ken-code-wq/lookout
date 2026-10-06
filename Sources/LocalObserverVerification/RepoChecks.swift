@@ -89,6 +89,20 @@ enum RepoChecks {
             print("    \(branches.count) branches: \(branches.prefix(4).map { "\($0.name) -\($0.behind)/+\($0.ahead)" })")
         }
         _ = ok("commits", GitHubAPI.commits(repo.slug, branch: base))
+        if let notes = ok("notifications", GitHubAPI.notifications(all: true)) {
+            print("    \(notes.count) notifications, \(notes.filter(\.unread).count) unread, first: \(notes.first.map { "\($0.kind.rawValue) \($0.reasonTitle) #\($0.number ?? 0)" } ?? "-")")
+        }
+        // GH_ISSUE_REPO=owner/name checks issues somewhere other than your own repositories.
+        let issueRepos = ProcessInfo.processInfo.environment["GH_ISSUE_REPO"].map { [$0] }
+            ?? repos.prefix(20).filter { $0.openIssues > 0 }.map(\.slug)
+        for slug in issueRepos {
+            if let issues = ok("issues \(slug)", GitHubAPI.issues(slug, open: true)), let first = issues.first {
+                if let detail = ok("issue #\(first.number)", GitHubAPI.issue(slug, number: first.number)) {
+                    print("    \(issues.count) open, #\(first.number) \(detail.summary.state.title), \(detail.timeline.count) comments, body \(detail.bodyHTML.count) chars")
+                }
+            }
+            break
+        }
         // CI: the most recently pushed repository that has workflow runs.
         for candidate in repos.prefix(15) {
             guard case .success(let runs) = GitHubAPI.runs(candidate.slug, perPage: 5), let run = runs.first else { continue }

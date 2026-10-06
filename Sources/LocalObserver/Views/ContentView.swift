@@ -21,7 +21,7 @@ struct ContentView: View {
     private var searchBinding: Binding<String> {
         if state.sidebar == .cleanup { return $diskStore.searchText }
         if state.sidebar == .ci { return $ciStore.searchText }
-        if state.sidebar == .github { return $gitHubStore.query }
+        if state.sidebar == .github || state.sidebar == .inbox { return $gitHubStore.query }
         if isRepos { return $repoStore.searchText }
         return isAgentHub ? $agentStore.searchText : $state.searchText
     }
@@ -36,11 +36,13 @@ struct ContentView: View {
     private var searchPrompt: String {
         if state.sidebar == .cleanup { return "Search project, folder, cache" }
         if state.sidebar == .ci { return "Search repository, workflow, branch" }
+        if state.sidebar == .inbox { return "Search notifications" }
         if state.sidebar == .github {
             switch gitHubStore.route {
             case nil: return "Find a repository…"
             case .repo(_, .branches): return "Search branches"
             case .repo(_, .commits): return "Search commits"
+            case .repo(_, .issues): return "Search issues"
             default: return "Search pull requests"
             }
         }
@@ -111,6 +113,8 @@ struct ContentView: View {
                 AgentLimitsPage(store: agentStore)
             } else if state.sidebar == .repos {
                 ReposPage(store: repoStore)
+            } else if state.sidebar == .inbox {
+                InboxPage(store: gitHubStore, repos: repoStore)
             } else if state.sidebar == .ci {
                 CIPage(store: ciStore, repos: repoStore, agents: agentStore)
             } else if state.sidebar == .cleanup {
@@ -150,7 +154,9 @@ struct ContentView: View {
     private var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
             Button {
-                if state.sidebar == .ci {
+                if state.sidebar == .inbox {
+                    gitHubStore.loadNotifications(force: true)
+                } else if state.sidebar == .ci {
                     ciStore.refresh()
                 } else if state.sidebar == .cleanup {
                     DiskCoordinator.shared.scan()
@@ -166,7 +172,7 @@ struct ContentView: View {
                     state.refresh()
                 }
             } label: {
-                if state.sidebar == .ci ? ciStore.isLoading : state.sidebar == .cleanup ? diskStore.isScanning : state.sidebar == .github ? gitHubStore.isLoadingCurrent : isRepos ? (repoStore.isScanning || repoStore.isFetchingGitHub) : (isAgentHub ? agentStore.isScanning : state.isScanning) {
+                if state.sidebar == .inbox ? gitHubStore.isLoading(GitHubStore.notificationsKey) : state.sidebar == .ci ? ciStore.isLoading : state.sidebar == .cleanup ? diskStore.isScanning : state.sidebar == .github ? gitHubStore.isLoadingCurrent : isRepos ? (repoStore.isScanning || repoStore.isFetchingGitHub) : (isAgentHub ? agentStore.isScanning : state.isScanning) {
                     ProgressView().controlSize(.small).frame(width: 16, height: 16)
                 } else {
                     Label("Refresh", systemImage: "arrow.clockwise")
@@ -231,6 +237,7 @@ struct SidebarView: View {
             }
             Section("Repos") {
                 row(.repos)
+                row(.inbox)
                 row(.github)
                 row(.ci)
                 row(.pullRequests)
@@ -300,6 +307,7 @@ struct SidebarView: View {
         case .repos: return repoStore.visibleRepos.count
         case .github: return gitHubStore.repositories.count
         case .ci: return CIStore.shared.activeRuns.count
+        case .inbox: return gitHubStore.unreadNotifications
         case .pullRequests: return repoStore.pulls.count
         default: return state.count(for: item)
         }
