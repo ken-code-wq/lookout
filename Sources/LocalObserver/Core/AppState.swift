@@ -135,6 +135,8 @@ final class AppState: ObservableObject {
     @Published var draft: LauncherDraft? = nil
     /// Session shown in the replay sheet.
     @Published var replaySession: AgentSession? = nil
+    /// The ⌘K command palette is showing.
+    @Published var paletteOpen = false
     @Published var sortKey: SortKey = .port
     @Published var sortDescending = false
     @Published var serverFilter = ServerFilter()

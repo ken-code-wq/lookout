@@ -82,6 +82,9 @@ struct ContentView: View {
         .sheet(item: $state.draft) { draft in
             LauncherSheet(state: state, draft: draft)
         }
+        .sheet(isPresented: $state.paletteOpen) {
+            CommandPalette(state: state, agentStore: agentStore)
+        }
         .sheet(item: $state.replaySession) { session in
             SessionReplayView(session: session) { state.replaySession = nil }
         }
