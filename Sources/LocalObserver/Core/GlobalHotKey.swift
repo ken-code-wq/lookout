@@ -114,6 +114,7 @@ enum HotKeyAction: UInt32, CaseIterable, Identifiable {
     case menuBar = 2
     case notch = 3
     case shelf = 4
+    case approvals = 5
 
     var id: UInt32 { rawValue }
     var title: String {
@@ -122,6 +123,7 @@ enum HotKeyAction: UInt32, CaseIterable, Identifiable {
         case .menuBar: return "Open the menu bar panel"
         case .notch: return "Open the notch"
         case .shelf: return "Open clipboard history"
+        case .approvals: return "Answer the oldest agent request"
         }
     }
     var defaultKey: HotKey {
@@ -131,6 +133,8 @@ enum HotKeyAction: UInt32, CaseIterable, Identifiable {
         case .notch: return HotKey(keyCode: UInt32(kVK_ANSI_N), modifiers: [.control, .option, .command])
         // V for paste. Opens the history with its search focused; Return copies the match.
         case .shelf: return HotKey(keyCode: UInt32(kVK_ANSI_V), modifiers: [.control, .option, .command])
+        // A for approve. Opens the oldest permission request with ⏎ (allow) and ⎋ (deny) ready.
+        case .approvals: return HotKey(keyCode: UInt32(kVK_ANSI_A), modifiers: [.control, .option, .command])
         }
     }
     /// Letters that hint at the action, offered first by the finder.
@@ -140,6 +144,7 @@ enum HotKeyAction: UInt32, CaseIterable, Identifiable {
         case .menuBar: return ["L", "M", "O", "B"]
         case .notch: return ["N", "D", "I", "T"]
         case .shelf: return ["V", "C", "H", "S"]
+        case .approvals: return ["A", "Y", "R", "E"]
         }
     }
 
@@ -149,6 +154,7 @@ enum HotKeyAction: UInt32, CaseIterable, Identifiable {
         case .menuBar: LiveSurfaces.shared.toggleMenuBarPanel()
         case .notch: NotchController.shared.toggle()
         case .shelf: NotchController.shared.toggleClipboardHistory()
+        case .approvals: ApprovalCenter.shared.openOldest()
         }
     }
 }

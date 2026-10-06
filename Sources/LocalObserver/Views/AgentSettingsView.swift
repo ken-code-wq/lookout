@@ -41,6 +41,7 @@ private struct AgentsPane: View {
                     if index < AgentKind.allCases.count - 1 { SettingsDivider() }
                 }
             }
+            AgentHooksSettings()
         }
     }
 }
@@ -227,6 +228,8 @@ private struct MenuBarDockPane: View {
                 ShortcutRow(action: .peek, title: "Toggle Agent Peek", detail: "Shows or hides the floating panel from any app")
                 SettingsDivider()
                 ShortcutRow(action: .shelf, title: "Open clipboard history", detail: "Opens the Shelf in the notch, ready to search")
+                SettingsDivider()
+                ShortcutRow(action: .approvals, title: "Answer agent requests", detail: "Opens the oldest permission request: ⏎ allows, ⎋ denies")
             }
             Text("These work everywhere, even when another app is in front. Press one again to close.")
                 .font(NFont.caption).foregroundStyle(N.text3).padding(.top, 6)

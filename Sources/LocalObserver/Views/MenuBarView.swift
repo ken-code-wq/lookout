@@ -15,6 +15,7 @@ struct MenuBarView: View {
     @ObservedObject var shelf: ShelfStore = .shared
     @ObservedObject var repoStore: RepoStore = .shared
     @ObservedObject var diskStore: DiskStore = .shared
+    @ObservedObject private var approvals = ApprovalCenter.shared
     @State private var shelfDropTargeted = false
 
     private var servers: [ServerEntry] {
@@ -49,6 +50,11 @@ struct MenuBarView: View {
             // height, so a full agents+limits+servers popover never gets clipped off the bottom of the display.
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
+                    // Agents blocked on a permission request, above everything else.
+                    if !approvals.pending.isEmpty {
+                        ApprovalListSection().padding(.horizontal, 10).padding(.vertical, 8)
+                        Divider().padding(.horizontal, 10)
+                    }
                     ForEach(Array(shownSections.enumerated()), id: \.element) { index, section in
                         if index > 0 { Divider().padding(.horizontal, 10) }
                         sectionView(section)

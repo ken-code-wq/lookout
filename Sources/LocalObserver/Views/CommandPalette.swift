@@ -160,6 +160,7 @@ struct CommandPalette: View {
                 WeeklyReportModel.shared.open()
             },
         ]
+        items += ApprovalPalette.items(agentStore: agentStore)
         let pages: [SidebarItem] = [.home, .agentActivity, .agentUsage, .agentLimits, .repos, .inbox, .github, .ci, .pullRequests,
                                     .all, .favorites, .launchers, .cleanup]
         items += pages.map { page in

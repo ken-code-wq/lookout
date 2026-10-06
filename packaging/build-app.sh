@@ -6,6 +6,9 @@ swift build -c release
 APP=Lookout.app
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/LocalObserver "$APP/Contents/MacOS/LocalObserver"
+# Agent hook helper, run by Claude Code and Codex hooks (Settings › Agents › Live hooks). Lives next to the app's
+# executable so the path written into agents' configs stays put across rebuilds.
+cp .build/release/lookout-hook "$APP/Contents/MacOS/lookout-hook"
 cp packaging/Info.plist "$APP/Contents/Info.plist"
 # Rendered from packaging/icon/make-icon.swift.
 cp packaging/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
@@ -26,7 +29,8 @@ cp -R .build/release/LocalObserver_LocalObserverCore.bundle "$APPEX/Contents/Res
 # Create one with packaging/make-signing-cert.sh; without it the build falls back to ad-hoc (no widgets).
 IDENTITY=$(security find-identity -p codesigning | awk -F'"' '/Lookout Local Signing/ { print $2; exit }')
 [[ -z "$IDENTITY" ]] && { echo "warning: no 'Lookout Local Signing' identity, signing ad-hoc (widgets won't appear)"; IDENTITY=-; }
-# Inside out: the extension with its sandbox entitlements first, then the app around it.
+# Inside out: the helper and the extension (with its sandbox entitlements) first, then the app around them.
+codesign --force --sign "$IDENTITY" "$APP/Contents/MacOS/lookout-hook"
 codesign --force --sign "$IDENTITY" --entitlements packaging/Widgets.entitlements "$APPEX"
 codesign --force --sign "$IDENTITY" "$APP"
 echo "Built $APP — open it with: open $APP"

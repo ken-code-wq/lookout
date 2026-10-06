@@ -33,7 +33,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
         let url = response.notification.request.content.userInfo["url"] as? String
+        let content = response.notification.request.content
+        let (category, action, info) = (content.categoryIdentifier, response.actionIdentifier, content.userInfo)
         DispatchQueue.main.async {
+            if MainActor.assumeIsolated({ ApprovalCenter.shared.handleNotification(category: category, action: action, userInfo: info) }) { return }
             if let url, let link = URL(string: url) { NSWorkspace.shared.open(link) } else { NSApp.activate(ignoringOtherApps: true) }
         }
         completionHandler()

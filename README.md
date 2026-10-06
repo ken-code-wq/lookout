@@ -29,6 +29,7 @@ If you run Claude Code, Codex, Cursor and friends side by side, you end up alt-t
 **Coding agents**
 - Live sessions across **Claude Code, Codex, OpenCode, Antigravity, GitHub Copilot, Cursor, Pi and Qoder**, with state: *Working*, *Needs you*, *Your turn*, *Idle*
 - Notifications when an agent needs approval or finishes its turn, and a jump straight to its terminal or editor
+- Optional live hooks: answer Claude Code's permission prompts (Allow, Deny, Always allow) from the notch, Peek or the menu bar, and send a quick reply to a session's terminal when it's your turn
 - Token usage, request counts and estimated API cost per agent, model and project
 - A GitHub-style 12-month activity heatmap, streaks and daily breakdowns
 - Plan limits (5-hour sessions, weekly windows, premium requests) with reset times and pace
@@ -105,6 +106,7 @@ LOCAL_OBSERVER_SNAPSHOT_DEMO=1 LOCAL_OBSERVER_SNAPSHOT_DIR=/tmp/shots .build/deb
 ## How it works
 
 - **Agents**: Lookout reads the session transcripts each agent already writes locally (for example `~/.claude/projects`, `~/.codex`) incrementally, and matches them to running processes from `ps`.
+- **Hooks** (opt-in, Settings › Agents › Live hooks): Lookout adds a `lookout-hook` entry to Claude Code's `settings.json` or Codex's `notify`, which reports events over a local socket in `~/Library/Application Support/LocalObserver/`. If Lookout isn't running, agents ask in their terminal as usual.
 - **Servers**: `lsof -iTCP -sTCP:LISTEN` for ports, `ps` and the process cwd for the project, then a short HTTP probe on `127.0.0.1`.
 - **Usage history** is kept in a local ledger under `~/Library/Application Support/LocalObserver/`.
 

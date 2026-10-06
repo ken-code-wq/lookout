@@ -4,6 +4,7 @@ import CoreAudio
 import LocalObserverCore
 import LocalObserverRepos
 import LocalObserverDisk
+import LocalObserverHooks
 
 /// Debug-only: `LOCAL_OBSERVER_SNAPSHOT_DEMO=1` makes the snapshot harness render made-up but plausible data
 /// (projects, sessions, a year of usage, plan limits, servers, audio) so screenshots never show this Mac's.
@@ -761,6 +762,43 @@ enum SnapshotDemo {
                             bodyHTML: "<p>Good catch, it now reads the bucket's reset time.</p>", createdAt: ago(4 * hour), replyTo: 1),
         ])
         store.loadDemoInbox(notifications: notes, issues: [slug: issues], details: [issueDetail])
+    }
+
+    // MARK: - Approvals
+
+    /// Two permission requests waiting (an edit, then a command) and a quick reply's context. Lays a hook state over the
+    /// Claude session like a real request would; `clearApprovals` takes it back off for the other shots.
+    static func loadApprovals(into center: ApprovalCenter, store: AgentStore) {
+        let now = Date()
+        let claude = store.runningSessions.first { $0.agent == .claude }
+        let edit = HookEvent(
+            agent: .claude, kind: .permissionRequest, sessionID: "demo-session-1", cwd: "\(root)/aurora-api", toolName: "Edit",
+            preview: HookToolPreview(tool: "Edit", input: [
+                "file_path": "\(root)/aurora-api/internal/search/limiter.go",
+                "old_string": "func (l *Limiter) Allow(tenant string) bool {\n\treturn l.bucket(tenant).Take(1)\n}",
+                "new_string": "func (l *Limiter) Allow(tenant string, cfg tenants.Limits) bool {\n\tb := l.bucket(tenant, cfg.Burst)\n\treturn b.Take(1)\n}",
+            ]),
+            suggestions: try? JSONSerialization.data(withJSONObject: [["type": "setMode", "mode": "acceptEdits", "destination": "session"]]),
+            receivedAt: now.addingTimeInterval(-8))
+        let command = HookEvent(
+            agent: .claude, kind: .permissionRequest, sessionID: "demo-session-1", cwd: "\(root)/aurora-api", toolName: "Bash",
+            preview: HookToolPreview(tool: "Bash", input: ["command": "go test ./internal/search/... -run TestLimiter -count=1",
+                                                          "description": "Run the limiter tests"]),
+            receivedAt: now.addingTimeInterval(-2))
+        center.loadDemo([edit, command].enumerated().map { index, event in
+            ApprovalRequest(id: "demo-approval-\(index)", event: event, agent: .claude, sessionID: claude?.id, projectName: "aurora-api",
+                            deadline: event.receivedAt.addingTimeInterval(45), connection: .unconnected())
+        }, lastMessages: Dictionary(uniqueKeysWithValues: store.runningSessions.filter { $0.state == .waiting }.map {
+            ($0.id, "Dark mode now follows the system setting on the settings page. Want me to add a manual override too?")
+        }))
+        if let claude { store.setHookStates([claude.id: AgentHookState(state: .needsInput, at: now, pinned: true)]) }
+    }
+
+    static func clearApprovals(from center: ApprovalCenter, store: AgentStore) {
+        center.loadDemo([])
+        center.notchPage = nil
+        center.keyboardArmed = false
+        store.setHookStates([:])
     }
 
     // MARK: - Audio

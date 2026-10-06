@@ -341,6 +341,8 @@ final class Preferences: ObservableObject {
     @Published var notchHotKey: HotKey? { didSet { saveHotKey(notchHotKey, Keys.notchHotKey) } }
     /// System-wide shortcut that opens clipboard history in the notch. Nil turns it off.
     @Published var shelfHotKey: HotKey? { didSet { saveHotKey(shelfHotKey, Keys.shelfHotKey) } }
+    /// System-wide shortcut that opens the oldest agent permission request. Nil turns it off.
+    @Published var approvalsHotKey: HotKey? { didSet { saveHotKey(approvalsHotKey, Keys.approvalsHotKey) } }
 
     private let defaults = UserDefaults.standard
 
@@ -370,6 +372,7 @@ final class Preferences: ObservableObject {
         static let menuBarHotKey = "LocalObserver.menuBarHotKey"
         static let notchHotKey = "LocalObserver.notchHotKey"
         static let shelfHotKey = "LocalObserver.shelfHotKey"
+        static let approvalsHotKey = "LocalObserver.approvalsHotKey"
         static let notchEnabled = "LocalObserver.notchEnabled"
         static let notchLeft = "LocalObserver.notchLeft"
         static let notchRight = "LocalObserver.notchRight"
@@ -452,6 +455,7 @@ final class Preferences: ObservableObject {
         menuBarHotKey = Self.loadHotKey(defaults, Keys.menuBarHotKey, default: HotKeyAction.menuBar.defaultKey)
         notchHotKey = Self.loadHotKey(defaults, Keys.notchHotKey, default: HotKeyAction.notch.defaultKey)
         shelfHotKey = Self.loadHotKey(defaults, Keys.shelfHotKey, default: HotKeyAction.shelf.defaultKey)
+        approvalsHotKey = Self.loadHotKey(defaults, Keys.approvalsHotKey, default: HotKeyAction.approvals.defaultKey)
     }
 
     func hotKey(for action: HotKeyAction) -> HotKey? {
@@ -460,6 +464,7 @@ final class Preferences: ObservableObject {
         case .menuBar: return menuBarHotKey
         case .notch: return notchHotKey
         case .shelf: return shelfHotKey
+        case .approvals: return approvalsHotKey
         }
     }
 
@@ -469,6 +474,7 @@ final class Preferences: ObservableObject {
         case .menuBar: menuBarHotKey = key
         case .notch: notchHotKey = key
         case .shelf: shelfHotKey = key
+        case .approvals: approvalsHotKey = key
         }
     }
 

@@ -57,7 +57,8 @@ final class AgentNotifier {
         }
         // Skip the first scan so launching the app doesn't replay everything already waiting.
         guard primed, store.settings.notifyNeedsInput else { return }
-        for session in attention where !knownAttention.contains(session.id) {
+        // Sessions with a request waiting in Lookout already got a notification with Allow and Deny (ApprovalCenter).
+        for session in attention where !knownAttention.contains(session.id) && !ApprovalCenter.shared.hasPending(sessionID: session.id) {
             let body = session.state == .failed
                 ? "\(session.title) stopped with an error."
                 : "\(session.title) is waiting for you in \(session.process?.host?.name ?? session.projectName)."

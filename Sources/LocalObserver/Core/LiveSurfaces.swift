@@ -94,6 +94,7 @@ final class LiveSurfaces: NSObject, NSWindowDelegate {
 
         if prefs.peekVisible { showPeek() }
         NotchController.shared.attach(state: state, agentStore: agentStore)
+        ApprovalCenter.shared.attach(agentStore: agentStore)
         AppAudio.shared.start()
         update()
         pendingURLs.forEach(handle)

@@ -372,6 +372,13 @@ final class NotchController: ObservableObject {
 
     var isAvailable: Bool { panel != nil }
 
+    /// Takes the keyboard while open, for the approval and reply pages (see ApprovalCenter). Released on collapse.
+    func takeKeyboard() {
+        guard let panel, mode == .expanded else { return }
+        panel.allowsKey = true
+        panel.makeKey()
+    }
+
     func collapse() {
         if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
         clickMonitor = nil

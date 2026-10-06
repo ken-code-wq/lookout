@@ -30,7 +30,9 @@ struct AgentInspectorView: View {
                     .textSelection(.enabled)
                 HStack(spacing: 6) {
                     AgentStateTag(state: session.state)
+                        .help(session.stateSource == .hook ? "Reported live by the agent's hook" : "Inferred from the session's transcript")
                     if session.process == nil { Tag(text: "Finished", color: .gray) }
+                    if session.process != nil && session.stateSource == .hook { Tag(text: "Live", color: .blue, symbol: "dot.radiowaves.left.and.right") }
                 }
                 actions.padding(.top, 4)
             }
