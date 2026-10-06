@@ -8,6 +8,8 @@ enum ProjectType: String, Codable, CaseIterable {
     case go = "Go"
     case rust = "Rust"
     case docker = "Docker"
+    /// Databases, caches, queues and other backing services (see LocalObserverServices).
+    case database = "Database"
     case staticSite = "Static"
     case xcode = "Apple"
     case app = "App"
@@ -22,6 +24,7 @@ enum ProjectType: String, Codable, CaseIterable {
         case .go: return "hare"
         case .rust: return "gearshape"
         case .docker: return "shippingbox"
+        case .database: return "cylinder.split.1x2"
         case .staticSite: return "doc.richtext"
         case .xcode: return "hammer"
         case .app: return "app"
@@ -35,6 +38,7 @@ enum ProjectType: String, Codable, CaseIterable {
         case .node: return .node
         case .python: return .python
         case .docker: return .docker
+        case .database: return .databases
         case .app: return .apps
         default: return .other
         }
@@ -46,6 +50,7 @@ enum TypeGroup: String, CaseIterable, Identifiable, Hashable {
     case node = "Node"
     case python = "Python"
     case docker = "Docker"
+    case databases = "Databases"
     case apps = "Apps"
     case other = "Other"
     var id: String { rawValue }
@@ -55,6 +60,7 @@ enum TypeGroup: String, CaseIterable, Identifiable, Hashable {
         case .node: return "hexagon"
         case .python: return "chevron.left.forwardslash.chevron.right"
         case .docker: return "shippingbox"
+        case .databases: return "cylinder.split.1x2"
         case .apps: return "app"
         case .other: return "square.stack.3d.up"
         }

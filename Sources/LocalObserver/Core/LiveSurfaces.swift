@@ -84,6 +84,7 @@ final class LiveSurfaces: NSObject, NSWindowDelegate {
         BudgetNotifier.shared.attach(to: agentStore)
         LimitRouteNotifier.shared.attach(to: agentStore)
         CICoordinator.shared.attach(state: state)
+        ServicesCoordinator.shared.attach(state: state)
         GitHubStore.shared.onActionResult = { [weak state] message, ok in
             state?.show(Toast(message: message, symbol: ok ? "checkmark.circle" : "exclamationmark.triangle", tone: ok ? .success : .danger))
         }
@@ -118,6 +119,7 @@ final class LiveSurfaces: NSObject, NSWindowDelegate {
         case "pulls": openMain(.pullRequests)
         case "github": openMain(.github)
         case "cleanup": openMain(.cleanup)
+        case "containers": openMain(.containers)
         case "ci": openMain(.ci)
         // The shelf lives in the notch; without one, the menu bar panel has it.
         case "shelf": if !NotchController.shared.openShelf(.shelf) { toggleMenuBarPanel() }

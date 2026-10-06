@@ -17,6 +17,8 @@ struct InspectorView: View {
                 actions.padding(.top, 14)
                 Rectangle().fill(N.divider).frame(height: 1).padding(.vertical, 16)
                 properties
+                ServiceSection(state: state, server: server)
+                EnvSection(server: server)
                 commandBlock.padding(.top, 18)
                 ShareSection(port: server.port).padding(.top, 18)
                 if let launcher {

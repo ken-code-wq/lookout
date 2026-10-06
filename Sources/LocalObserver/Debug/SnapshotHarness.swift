@@ -7,6 +7,8 @@ import LocalObserverWidgetUI
 import LocalObserverShelf
 import LocalObserverRepos
 import LocalObserverDisk
+import LocalObserverServices
+import LocalObserverEnv
 
 /// Debug-only: `LOCAL_OBSERVER_SNAPSHOT_DIR=/tmp/shots .build/debug/LocalObserver` renders each agent page
 /// offscreen in light and dark mode, writes PNGs, and quits. Nothing is shown on screen or activated.
@@ -99,6 +101,8 @@ enum SnapshotHarness {
             SnapshotDemo.loadRepos(into: RepoStore.shared)
             SnapshotDemo.loadGitHub(into: GitHubStore.shared)
             SnapshotDemo.loadDisk(into: DiskStore.shared)
+            SnapshotDemo.loadServices(into: ServicesStore.shared)
+            SnapshotDemo.loadEnv(into: EnvStore.shared)
             SnapshotDemo.loadCI(into: CIStore.shared)
             SnapshotDemo.loadContributions(into: GitHubStore.shared)
             SnapshotDemo.loadAgentTasks(into: AgentTaskStore.shared)
@@ -132,6 +136,7 @@ enum SnapshotHarness {
                 ("pulls", AnyView(PullRequestsPage(store: RepoStore.shared)), CGSize(width: width, height: 800)),
                 ("settings-repos", AnyView(RepoSettingsPane()), CGSize(width: 620, height: 900)),
                 ("cleanup", AnyView(CleanupPage(store: DiskStore.shared)), CGSize(width: width, height: 1500)),
+                ("containers", AnyView(ContainersPage(store: ServicesStore.shared, state: makeState())), CGSize(width: width, height: 900)),
                 ("ci", AnyView(CIPage(store: CIStore.shared, repos: RepoStore.shared, agents: store)), CGSize(width: width, height: 1200)),
                 ("palette", AnyView(CommandPalette(state: makeState(), agentStore: store)), CGSize(width: 640, height: 440)),
                 ("agent-task", AnyView(AgentTaskSheet(coordinator: .shared, repos: .shared, tasks: .shared, draft: AgentTaskDraft(

@@ -21,6 +21,7 @@ enum SidebarItem: Hashable {
     case shelf
     case clipboard
     case cleanup
+    case containers
 
     var title: String {
         switch self {
@@ -28,6 +29,7 @@ enum SidebarItem: Hashable {
         case .shelf: return "Shelf"
         case .clipboard: return "Clipboard"
         case .cleanup: return "Cleanup"
+        case .containers: return "Containers"
         case .all: return "All servers"
         case .favorites: return "Favorites"
         case .launchers: return "Launchers"
@@ -49,6 +51,7 @@ enum SidebarItem: Hashable {
         case .shelf: return "tray.full"
         case .clipboard: return "doc.on.clipboard"
         case .cleanup: return "internaldrive"
+        case .containers: return "shippingbox"
         case .all: return "server.rack"
         case .favorites: return "star"
         case .launchers: return "play.square.stack"
@@ -310,7 +313,7 @@ final class AppState: ObservableObject {
     var filtered: [ServerEntry] {
         var list = visibleServers
         switch sidebar {
-        case .all, .launchers, .agentActivity, .agentUsage, .agentLimits, .home, .shelf, .clipboard, .repos, .github, .ci, .inbox, .pullRequests, .cleanup: break
+        case .all, .launchers, .agentActivity, .agentUsage, .agentLimits, .home, .shelf, .clipboard, .repos, .github, .ci, .inbox, .pullRequests, .cleanup, .containers: break
         case .favorites: list = list.filter { favorites.contains($0.port) }
         case .group(let g): list = list.filter { $0.projectType.group == g }
         }
@@ -361,7 +364,7 @@ final class AppState: ObservableObject {
         case .all: return visibleServers.count
         case .favorites: return visibleServers.filter { favorites.contains($0.port) }.count
         case .launchers: return managed.count
-        case .agentActivity, .agentUsage, .agentLimits, .home, .shelf, .clipboard, .repos, .github, .ci, .inbox, .pullRequests, .cleanup: return 0
+        case .agentActivity, .agentUsage, .agentLimits, .home, .shelf, .clipboard, .repos, .github, .ci, .inbox, .pullRequests, .cleanup, .containers: return 0
         case .group(let g): return visibleServers.filter { $0.projectType.group == g }.count
         }
     }

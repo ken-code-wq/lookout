@@ -4,6 +4,7 @@ import WidgetKit
 import LocalObserverCore
 import LocalObserverShelf
 import LocalObserverRepos
+import LocalObserverServices
 import UserNotifications
 
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
@@ -98,6 +99,7 @@ struct LocalObserverApp: App {
                     if state.sidebar.isAgentPage { agentStore.refresh() }
                     else if state.sidebar == .github { GitHubStore.shared.refreshCurrent() }
                     else if state.sidebar == .cleanup { DiskCoordinator.shared.scan() }
+                    else if state.sidebar == .containers { ServicesStore.shared.refresh() }
                     else if state.sidebar == .ci { CIStore.shared.refresh() }
                     else if state.sidebar == .inbox { GitHubStore.shared.loadNotifications(force: true) }
                     else if state.sidebar.isRepoPage { RepoStore.shared.refresh(); RepoStore.shared.refreshGitHub() }

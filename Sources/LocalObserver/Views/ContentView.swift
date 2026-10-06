@@ -4,6 +4,7 @@ import LocalObserverCore
 import LocalObserverShelf
 import LocalObserverRepos
 import LocalObserverDisk
+import LocalObserverServices
 
 struct ContentView: View {
     @ObservedObject var state: AppState
@@ -14,6 +15,7 @@ struct ContentView: View {
     @ObservedObject var ciStore: CIStore = .shared
     @ObservedObject var agentTasks: AgentTaskCoordinator = .shared
     @ObservedObject var weeklyReport: WeeklyReportModel = .shared
+    @ObservedObject var servicesStore: ServicesStore = .shared
     @State private var dropTargeted = false
     @State private var columns: NavigationSplitViewVisibility = .all
     @State private var windowWidth: CGFloat = 1200
@@ -22,6 +24,7 @@ struct ContentView: View {
 
     private var searchBinding: Binding<String> {
         if state.sidebar == .cleanup { return $diskStore.searchText }
+        if state.sidebar == .containers { return $servicesStore.searchText }
         if state.sidebar == .ci { return $ciStore.searchText }
         if state.sidebar == .github || state.sidebar == .inbox { return $gitHubStore.query }
         if isRepos { return $repoStore.searchText }
@@ -37,6 +40,7 @@ struct ContentView: View {
 
     private var searchPrompt: String {
         if state.sidebar == .cleanup { return "Search project, folder, cache" }
+        if state.sidebar == .containers { return "Search container, image, project, port" }
         if state.sidebar == .ci { return "Search repository, workflow, branch" }
         if state.sidebar == .inbox { return "Search notifications" }
         if state.sidebar == .github {
@@ -130,6 +134,8 @@ struct ContentView: View {
                 CIPage(store: ciStore, repos: repoStore, agents: agentStore)
             } else if state.sidebar == .cleanup {
                 CleanupPage(store: diskStore)
+            } else if state.sidebar == .containers {
+                ContainersPage(store: servicesStore, state: state)
             } else if state.sidebar == .github {
                 GitHubPage(store: gitHubStore, repos: repoStore, agents: agentStore)
             } else if state.sidebar == .pullRequests {
@@ -171,6 +177,8 @@ struct ContentView: View {
                     ciStore.refresh()
                 } else if state.sidebar == .cleanup {
                     DiskCoordinator.shared.scan()
+                } else if state.sidebar == .containers {
+                    servicesStore.refresh()
                 } else if state.sidebar == .github {
                     gitHubStore.refreshCurrent()
                     repoStore.refreshGitHub()
@@ -183,7 +191,7 @@ struct ContentView: View {
                     state.refresh()
                 }
             } label: {
-                if state.sidebar == .inbox ? gitHubStore.isLoading(GitHubStore.notificationsKey) : state.sidebar == .ci ? ciStore.isLoading : state.sidebar == .cleanup ? diskStore.isScanning : state.sidebar == .github ? gitHubStore.isLoadingCurrent : isRepos ? (repoStore.isScanning || repoStore.isFetchingGitHub) : (isAgentHub ? agentStore.isScanning : state.isScanning) {
+                if state.sidebar == .inbox ? gitHubStore.isLoading(GitHubStore.notificationsKey) : state.sidebar == .ci ? ciStore.isLoading : state.sidebar == .cleanup ? diskStore.isScanning : state.sidebar == .containers ? servicesStore.isRefreshing : state.sidebar == .github ? gitHubStore.isLoadingCurrent : isRepos ? (repoStore.isScanning || repoStore.isFetchingGitHub) : (isAgentHub ? agentStore.isScanning : state.isScanning) {
                     ProgressView().controlSize(.small).frame(width: 16, height: 16)
                 } else {
                     Label("Refresh", systemImage: "arrow.clockwise")
@@ -265,6 +273,7 @@ struct SidebarView: View {
                 row(.all)
                 row(.favorites)
                 row(.launchers)
+                row(.containers)
             }
             Section("Disk") {
                 row(.cleanup)
@@ -328,6 +337,7 @@ struct SidebarView: View {
         case .ci: return CIStore.shared.activeRuns.count
         case .inbox: return gitHubStore.unreadNotifications
         case .pullRequests: return repoStore.pulls.count
+        case .containers: return ServicesStore.shared.runningCount
         default: return state.count(for: item)
         }
     }

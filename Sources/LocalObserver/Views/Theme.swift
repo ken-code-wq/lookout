@@ -93,6 +93,7 @@ extension ProjectType {
         case .node: return .green
         case .python: return .yellow
         case .docker: return .blue
+        case .database: return .purple
         case .ruby: return .red
         case .go: return .blue
         case .rust: return .orange
