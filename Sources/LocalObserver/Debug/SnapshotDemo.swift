@@ -381,6 +381,16 @@ enum SnapshotDemo {
         store.selectedRun = 9002
     }
 
+    /// Pull requests opened and merged in the last few weeks, so the weekly report never asks GitHub.
+    static func loadWeekly(into model: WeeklyReportModel) {
+        let counts = [(4, 2), (7, 5), (5, 6), (3, 4), (6, 3)]
+        var pulls: [Date: WeeklyPulls] = [:]
+        for (back, count) in counts.enumerated() {
+            pulls[WeeklyReport.week(offset: -back, from: Date()).start] = WeeklyPulls(opened: count.0, merged: count.1)
+        }
+        model.loadDemo(pulls: pulls)
+    }
+
     /// A year of contributions with a believable rhythm: busy weekdays, quiet weekends, a holiday gap, a recent run.
     static func loadContributions(into store: GitHubStore) {
         let cal = Calendar(identifier: .gregorian)

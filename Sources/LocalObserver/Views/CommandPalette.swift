@@ -154,6 +154,9 @@ struct CommandPalette: View {
             PaletteItem(id: "a:fetch", group: .actions, title: "Fetch all repositories", symbol: "arrow.down.circle", keywords: "git") { repos.fetchAll() },
             PaletteItem(id: "a:peek", group: .actions, title: "Toggle Agent Peek", symbol: "eye") { LiveSurfaces.shared.togglePeek() },
             PaletteItem(id: "a:digest", group: .actions, title: "Morning digest", symbol: "sun.max", keywords: "today summary overnight") { go(.home) },
+            PaletteItem(id: "a:weekly", group: .actions, title: "Weekly report", symbol: "calendar", keywords: "week summary share export usage") {
+                WeeklyReportModel.shared.open()
+            },
         ]
         let pages: [SidebarItem] = [.home, .agentActivity, .agentUsage, .agentLimits, .repos, .inbox, .github, .ci, .pullRequests,
                                     .all, .favorites, .launchers, .cleanup]

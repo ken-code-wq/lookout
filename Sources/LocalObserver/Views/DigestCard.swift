@@ -36,10 +36,13 @@ struct DigestCard: View {
         var text: String
         var detail: String
         var page: SidebarItem
+        /// Runs instead of going to `page`, for lines that open a sheet.
+        var action: (() -> Void)? = nil
     }
 
     var lines: [Line] {
         var lines: [Line] = []
+        if Calendar.current.component(.weekday, from: Date()) == 2, let week = yourWeek { lines.append(week) }
         let finished = agentStore.snapshot.sessions.filter { $0.updatedAt >= since && $0.process == nil }
         if !finished.isEmpty {
             let cost = finished.compactMap(\.cost).reduce(0, +)
@@ -112,7 +115,7 @@ struct DigestCard: View {
                         .help("Hide until tomorrow; the next digest starts from now")
                 }
                 VStack(spacing: 2) {
-                    ForEach(lines) { line in DigestRow(line: line) { navigate(line.page) } }
+                    ForEach(lines) { line in DigestRow(line: line) { if let action = line.action { action() } else { navigate(line.page) } } }
                 }
             }
             .padding(18)

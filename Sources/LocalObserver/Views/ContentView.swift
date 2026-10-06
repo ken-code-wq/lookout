@@ -12,6 +12,7 @@ struct ContentView: View {
     @ObservedObject var gitHubStore: GitHubStore = .shared
     @ObservedObject var diskStore: DiskStore = .shared
     @ObservedObject var ciStore: CIStore = .shared
+    @ObservedObject var weeklyReport: WeeklyReportModel = .shared
     @State private var dropTargeted = false
     @State private var columns: NavigationSplitViewVisibility = .all
     @State private var windowWidth: CGFloat = 1200
@@ -87,6 +88,9 @@ struct ContentView: View {
         }
         .sheet(item: $state.replaySession) { session in
             SessionReplayView(session: session) { state.replaySession = nil }
+        }
+        .sheet(isPresented: $weeklyReport.isPresented) {
+            WeeklyReportSheet(agentStore: agentStore)
         }
         .frame(minWidth: 760, minHeight: 540)
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { windowWidth = $0 }
