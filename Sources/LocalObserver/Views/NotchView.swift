@@ -145,12 +145,18 @@ struct NotchRootView: View {
                 ZStack {
                     shape.fill(Color.black)
                         .frame(width: size.width + 24, height: size.height + 6)
+                        // Room around the shape before blurring: a blur is cut at its view's bounds, which left a
+                        // hard edge where the shadow should fade out.
+                        .padding(50)
                         .blur(radius: 18)
+                        .padding(-50)
                         .offset(y: 12)
                         .opacity(0.42)
                     shape.fill(Color.black)
                         .frame(width: size.width + 6, height: size.height)
+                        .padding(20)
                         .blur(radius: 5)
+                        .padding(-20)
                         .offset(y: 4)
                         .opacity(0.35)
                 }
