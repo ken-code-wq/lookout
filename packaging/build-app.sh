@@ -24,6 +24,13 @@ mkdir -p "$APPEX/Contents/MacOS" "$APPEX/Contents/Resources"
 cp .build/release/LocalObserverWidgets "$APPEX/Contents/MacOS/LocalObserverWidgets"
 cp packaging/WidgetInfo.plist "$APPEX/Contents/Info.plist"
 cp -R .build/release/LocalObserver_LocalObserverCore.bundle "$APPEX/Contents/Resources/"
+# `lookout` CLI, symlinked onto the PATH from Settings › Automation.
+mkdir -p "$APP/Contents/Helpers"
+cp .build/release/lookout "$APP/Contents/Helpers/lookout"
+# Shortcuts only lists App Intents from a bundle with Metadata.appintents, which Xcode's
+# appintentsmetadataprocessor generates. It ships with Xcode only (not the Command Line Tools), so this is
+# best effort: skipped without Xcode, and a failure never breaks the build. See Sources/LocalObserver/Core/LookoutIntents.swift.
+packaging/appintents-metadata.sh "$APP" || echo "warning: App Intents metadata step failed; Shortcuts won't list Lookout's actions"
 # Sign with a real certificate when there is one: macOS won't list widgets from an ad-hoc signed extension,
 # and a stable identity keeps privacy permissions (audio capture, automation) across rebuilds.
 # Create one with packaging/make-signing-cert.sh; without it the build falls back to ad-hoc (no widgets).
@@ -31,6 +38,7 @@ IDENTITY=$(security find-identity -p codesigning | awk -F'"' '/Lookout Local Sig
 [[ -z "$IDENTITY" ]] && { echo "warning: no 'Lookout Local Signing' identity, signing ad-hoc (widgets won't appear)"; IDENTITY=-; }
 # Inside out: the helper and the extension (with its sandbox entitlements) first, then the app around them.
 codesign --force --sign "$IDENTITY" "$APP/Contents/MacOS/lookout-hook"
+codesign --force --sign "$IDENTITY" "$APP/Contents/Helpers/lookout"
 codesign --force --sign "$IDENTITY" --entitlements packaging/Widgets.entitlements "$APPEX"
 codesign --force --sign "$IDENTITY" "$APP"
 echo "Built $APP — open it with: open $APP"

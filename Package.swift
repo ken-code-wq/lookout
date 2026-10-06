@@ -9,6 +9,8 @@ let package = Package(
         .executable(name: "LocalObserverWidgets", targets: ["LocalObserverWidgets"]),
         // Run by agents' hooks, not by people. packaging/build-app.sh copies it next to the app's executable.
         .executable(name: "lookout-hook", targets: ["lookout-hook"]),
+        // Command-line tool copied into the app bundle (Contents/Helpers) by packaging/build-app.sh.
+        .executable(name: "lookout", targets: ["LookoutCLI"]),
         // Loaded by /usr/bin/perl, not linked into the app. See Sources/NowPlayingBridge.
         .library(name: "NowPlayingBridge", type: .dynamic, targets: ["NowPlayingBridge"])
     ],
@@ -78,6 +80,12 @@ let package = Package(
                 .unsafeFlags(["-Xlinker", "-application_extension", "-Xlinker", "-e", "-Xlinker", "_NSExtensionMain"]),
                 .linkedFramework("WidgetKit")
             ]
+        ),
+        // `lookout` CLI: reads the widget snapshot and drives the app through lookout:// links.
+        .executableTarget(
+            name: "LookoutCLI",
+            dependencies: ["LocalObserverCore"],
+            path: "Sources/LookoutCLI"
         ),
         .executableTarget(
             name: "LocalObserverVerification",

@@ -83,6 +83,29 @@ Requires macOS 14.2 or later on Apple Silicon.
 
 Desktop widgets need a build signed with a real certificate, so they won't appear in the prebuilt release. Build from source to use them.
 
+## Automation
+
+Lookout can be driven from scripts, [Raycast](https://www.raycast.com) and Shortcuts.
+
+**Command-line tool.** Settings › Automation › **Install command-line tool** links `lookout` into `/usr/local/bin` (or `~/.local/bin` when that isn't writable, and tells you which).
+
+```bash
+lookout status --json          # agents, plan limits, servers and today's usage
+lookout agents                 # running sessions and their state
+lookout limits                 # every plan-limit window and what's left
+lookout open usage             # dashboard, sessions, usage, limits, repos, servers, launchers…
+lookout launcher start web     # start, stop or toggle a saved launcher by name
+lookout timer 25               # focus timer; `lookout awake toggle` for keep-awake
+```
+
+It reads the snapshot Lookout already writes for its desktop widgets, so it's instant and never scans anything itself. Actions go to the app through `lookout://` links.
+
+**Links.** `lookout://open/<page>`, `lookout://launcher/<name>/start|stop|toggle`, `lookout://palette`, `lookout://new-task`, `lookout://weekly-report`, `lookout://keep-awake/on|off|toggle`, `lookout://timer/start/<minutes>`, `lookout://timer/stop`, `lookout://refresh`. Open them from anywhere: `open lookout://open/limits`.
+
+**Raycast.** Make a [script command](https://github.com/raycast/script-commands) that runs `lookout limits` (with `@raycast.mode fullOutput`) or `lookout launcher toggle web` (`@raycast.mode silent`).
+
+**Shortcuts.** Use a **Run Shell Script** action with `lookout status --json` and parse it with **Get Dictionary from Input**, or an **Open URLs** action with a `lookout://` link. Builds packaged with Xcode installed also expose native Shortcuts actions (agents needing attention, plan limit left, launchers, pages, keep-awake, focus timer); Settings › Automation says whether yours has them.
+
 ## Build from source
 
 Only the Xcode Command Line Tools are needed.

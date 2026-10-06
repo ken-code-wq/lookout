@@ -132,6 +132,7 @@ struct LocalObserverVerification {
         RoutingChecks.run()
         WeeklyReportChecks.run()
         HookChecks.run()
+        AutomationChecks.run()
 
         for agent in AgentKind.allCases {
             precondition(AgentIconStore.image(for: agent) != nil, "Missing official icon for \(agent.name)")

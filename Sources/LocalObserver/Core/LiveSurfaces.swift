@@ -101,34 +101,63 @@ final class LiveSurfaces: NSObject, NSWindowDelegate {
         pendingURLs = []
     }
 
-    // MARK: Widget links
+    // MARK: Links
 
-    /// `localobserver://activity|usage|limits|servers|shelf`, and `localobserver://session?id=…` to jump to a session.
+    /// `lookout://…` from scripts, the CLI and Shortcuts, and the widgets' `localobserver://…` (see LookoutRoute).
     func handle(_ url: URL) {
-        guard url.scheme == WidgetLink.scheme else { return }
-        guard let agentStore else {
-            pendingURLs.append(url)
+        guard let scheme = url.scheme?.lowercased(), scheme == LookoutRoute.scheme || scheme == LookoutRoute.legacyScheme else { return }
+        guard let route = LookoutRoute(url: url) else {
+            // Widget links this build doesn't know still land somewhere useful, as they always have.
+            if scheme == LookoutRoute.legacyScheme { perform(.open(.sessions)) } else { NSSound.beep() }
             return
         }
-        switch url.host {
-        case "usage": openMain(.agentUsage)
-        case "limits": openMain(.agentLimits)
-        case "servers": openMain(.all)
-        case "repos": openMain(.repos)
-        case "pulls": openMain(.pullRequests)
-        case "github": openMain(.github)
-        case "cleanup": openMain(.cleanup)
-        case "ci": openMain(.ci)
+        perform(route)
+    }
+
+    func perform(_ route: LookoutRoute) {
+        guard let agentStore, let state else {
+            pendingURLs.append(route.url)
+            return
+        }
+        switch route {
         // The shelf lives in the notch; without one, the menu bar panel has it.
-        case "shelf": if !NotchController.shared.openShelf(.shelf) { toggleMenuBarPanel() }
-        case "session":
-            let id = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "id" }?.value
+        case .open(.shelf): if !NotchController.shared.openShelf(.shelf) { toggleMenuBarPanel() }
+        case .open(let page): openMain(SidebarItem(page))
+        case .session(let id):
             let session = agentStore.runningSessions.first { $0.id == id }
             // Straight to the terminal it runs in when we can; otherwise select it on the Activity page.
             if let session, AgentActions.jump(to: session) { return }
             agentStore.selectedSessionID = session?.id
             openMain(.agentActivity)
-        default: openMain(.agentActivity)
+        case .launcher(let name, let action):
+            guard let index = LookoutRoute.matchLauncher(name, names: state.managed.map(\.name)) else {
+                toast("No launcher named “\(name)”", ok: false)
+                return
+            }
+            let launcher = state.managed[index]
+            let running = state.isRunning(launcher)
+            switch action {
+            case .start: if !running { state.start(launcher) }
+            case .stop: if running { state.stop(launcher) }
+            case .toggle: if running { state.stop(launcher) } else { state.start(launcher) }
+            }
+        case .palette:
+            openMain(state.sidebar)
+            state.paletteOpen = true
+        case .newTask: AgentTaskCoordinator.shared.present(openWindow: true)
+        case .weeklyReport:
+            openMain(state.sidebar)
+            WeeklyReportModel.shared.open()
+        case .peek: togglePeek()
+        case .keepAwake(let value):
+            let on = value == .toggle ? prefs.keepAwake == .off : value == .on
+            prefs.keepAwake = on ? .always : .off
+        case .timer(let minutes):
+            if let minutes { FocusTimer.shared.start(minutes: minutes) } else { FocusTimer.shared.stop() }
+        case .refresh:
+            state.refresh()
+            agentStore.refresh(forceLimits: true)
+        case .checkForUpdates: NSSound.beep()
         }
     }
 

@@ -28,6 +28,7 @@
             <key>CFBundleURLSchemes</key>
             <array>
                 <string>localobserver</string>
+                <string>lookout</string>
             </array>
         </dict>
     </array>

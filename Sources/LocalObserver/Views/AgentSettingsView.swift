@@ -23,6 +23,8 @@ struct AgentSettingsView: View {
                 .tabItem { Label("Shelf", systemImage: "tray.full") }
             GeneralPane(store: store)
                 .tabItem { Label("General", systemImage: "gearshape") }
+            AutomationSettingsPane()
+                .tabItem { Label("Automation", systemImage: "terminal") }
         }
         .frame(width: 620, height: 560)
     }
