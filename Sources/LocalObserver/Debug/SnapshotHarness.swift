@@ -101,6 +101,7 @@ enum SnapshotHarness {
             SnapshotDemo.loadDisk(into: DiskStore.shared)
             SnapshotDemo.loadCI(into: CIStore.shared)
             SnapshotDemo.loadContributions(into: GitHubStore.shared)
+            SnapshotDemo.loadAgentTasks(into: AgentTaskStore.shared)
         } else {
             AppAudio.shared.refresh()
         }
@@ -132,6 +133,8 @@ enum SnapshotHarness {
                 ("cleanup", AnyView(CleanupPage(store: DiskStore.shared)), CGSize(width: width, height: 1500)),
                 ("ci", AnyView(CIPage(store: CIStore.shared, repos: RepoStore.shared, agents: store)), CGSize(width: width, height: 1200)),
                 ("palette", AnyView(CommandPalette(state: makeState(), agentStore: store)), CGSize(width: 640, height: 440)),
+                ("agent-task", AnyView(AgentTaskSheet(coordinator: .shared, repos: .shared, tasks: .shared, draft: AgentTaskDraft(
+                    prompt: "Add a retry with backoff to the search client, and tests for it."))), CGSize(width: 580, height: 640)),
                 ("replay", AnyView(replay(store)), CGSize(width: 1180, height: 820)),
                 ("agent-diff", AnyView(agentDiff(store)), CGSize(width: 1180, height: 1100)),
                 ("settings-disk", AnyView(DiskSettingsPane()), CGSize(width: 620, height: 560)),

@@ -425,6 +425,24 @@ enum SnapshotDemo {
         store.loadDemo(repos: repos, pulls: pulls, login: "dev")
     }
 
+    /// Two sessions were started from Lookout: the Codex one running now and a finished Claude one, so the
+    /// Sessions page shows the "From Lookout" tag.
+    static func loadAgentTasks(into store: AgentTaskStore) {
+        let now = Date()
+        AgentTaskCoordinator.shared.loadDemo(installed: [.claude: "/usr/local/bin/claude", .codex: "/usr/local/bin/codex",
+                                                         .openCode: "/usr/local/bin/opencode"])
+        store.loadDemo(tasks: [
+            AgentTask(repoRoot: "\(root)/pixel-garden", repoName: "pixel-garden", directory: "\(root)/pixel-garden", branch: "fix/flaky-auth",
+                      baseBranch: nil, isWorktree: false, cli: .codex,
+                      prompt: "The auth test fails about one run in five. Find the race and fix it.", terminal: .ghostty,
+                      launchedAt: now.addingTimeInterval(-22 * 60 - 4)),
+            AgentTask(repoRoot: "\(root)/tidepool", repoName: "tidepool", directory: "\(root)/tidepool", branch: "main",
+                      baseBranch: nil, isWorktree: false, cli: .claude,
+                      prompt: "Write a migration that adds an index on tide_events(station_id, observed_at).", terminal: .terminal,
+                      launchedAt: now.addingTimeInterval(-5 * 3600 - 6)),
+        ])
+    }
+
     static func loadCI(into store: CIStore) {
         let now = Date()
         func ago(_ m: Double) -> Date { now.addingTimeInterval(-m * 60) }

@@ -171,6 +171,8 @@ struct RepoMenu: View {
     var repo: Repo
 
     var body: some View {
+        Button("New Agent Task…") { AgentTaskCoordinator.shared.present(AgentTaskDraft(repoRoot: repo.root)) }
+        Divider()
         Button("Open in Editor") { RepoActions.openEditor(repo.root) }
         Button("Open in Terminal") { RepoActions.openTerminal(repo.root) }
         Button("Reveal in Finder") { RepoActions.reveal(repo.root) }

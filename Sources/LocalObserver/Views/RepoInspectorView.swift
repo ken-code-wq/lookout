@@ -56,6 +56,9 @@ struct RepoInspectorView: View {
             .help(repo.status.upstream == nil ? "This branch doesn't track a remote branch" : "git pull --ff-only: never merges or rebases")
             Spacer(minLength: 0)
             if store.busy.contains(repo.root) { ProgressView().controlSize(.small) }
+            IconButton(symbol: "plus.bubble", help: "New agent task in \(repo.name)") {
+                AgentTaskCoordinator.shared.present(AgentTaskDraft(repoRoot: repo.root))
+            }
             IconButton(symbol: "arrow.triangle.2.circlepath", help: "Fetch") { store.fetch(repo) }
                 .disabled(repo.isLocalOnly || store.busy.contains(repo.root))
             IconButton(symbol: "terminal", help: "Open in Terminal") { RepoActions.openTerminal(repo.root) }
@@ -128,6 +131,9 @@ struct RepoInspectorView: View {
                         }
                         Spacer(minLength: 6)
                         RepoStateChips(changes: worktree.changes, unpushed: worktree.ahead, behind: worktree.behind)
+                        IconButton(symbol: "plus.bubble", help: "New agent task in this worktree", size: 22) {
+                            AgentTaskCoordinator.shared.present(AgentTaskDraft(repoRoot: repo.root, checkout: worktree.path))
+                        }
                         IconButton(symbol: "chevron.left.forwardslash.chevron.right", help: "Open in editor", size: 22) {
                             RepoActions.openEditor(worktree.path)
                         }

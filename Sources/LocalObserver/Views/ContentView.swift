@@ -12,6 +12,7 @@ struct ContentView: View {
     @ObservedObject var gitHubStore: GitHubStore = .shared
     @ObservedObject var diskStore: DiskStore = .shared
     @ObservedObject var ciStore: CIStore = .shared
+    @ObservedObject var agentTasks: AgentTaskCoordinator = .shared
     @State private var dropTargeted = false
     @State private var columns: NavigationSplitViewVisibility = .all
     @State private var windowWidth: CGFloat = 1200
@@ -87,6 +88,9 @@ struct ContentView: View {
         }
         .sheet(item: $state.replaySession) { session in
             SessionReplayView(session: session) { state.replaySession = nil }
+        }
+        .sheet(item: $agentTasks.draft) { draft in
+            AgentTaskSheet(coordinator: agentTasks, repos: repoStore, tasks: .shared, draft: draft)
         }
         .frame(minWidth: 760, minHeight: 540)
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { windowWidth = $0 }
@@ -183,6 +187,14 @@ struct ContentView: View {
             }
             .help("Refresh now (⌘R)")
 
+            if state.sidebar == .agentActivity || state.sidebar == .repos {
+                Button {
+                    agentTasks.present(AgentTaskDraft(repoRoot: state.sidebar == .repos ? repoStore.selected?.root : nil))
+                } label: {
+                    Label("New agent task", systemImage: "plus.bubble")
+                }
+                .help("Start an agent on a new worktree with a prompt")
+            }
             if isAgentHub || isRepos {
                 SettingsLink {
                     Label(isRepos ? "Repos settings" : "Agent settings", systemImage: "gearshape")
