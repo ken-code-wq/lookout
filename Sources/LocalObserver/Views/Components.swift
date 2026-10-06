@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import LocalObserverCore
 
 // MARK: - Tags
 
@@ -20,6 +21,112 @@ struct Tag: View {
         .frame(height: 20)
         .background(color.bg, in: RoundedRectangle(cornerRadius: 3, style: .continuous))
         .fixedSize()
+    }
+}
+
+/// A checkout's branch. Linked worktrees are purple with a stacked glyph, so two checkouts of one repository
+/// (main and the worktree an agent is working in) read apart at a glance; the tooltip says whose worktree it is.
+struct BranchTag: View {
+    var branch: String
+    var worktree = false
+    var detached = false
+    var help: String? = nil
+    var maxWidth: CGFloat = 200
+
+    init(branch: String, worktree: Bool = false, detached: Bool = false, help: String? = nil, maxWidth: CGFloat = 200) {
+        self.branch = branch
+        self.worktree = worktree
+        self.detached = detached
+        self.help = help
+        self.maxWidth = maxWidth
+    }
+
+    init(_ git: GitCheckout, maxWidth: CGFloat = 200) {
+        self.init(branch: git.refLabel, worktree: git.isLinkedWorktree, detached: git.isDetached,
+                  help: BranchTag.describe(git), maxWidth: maxWidth)
+    }
+
+    var body: some View {
+        let color: TagColor = worktree ? .purple : .gray
+        HStack(spacing: 4) {
+            Image(systemName: worktree ? "square.stack.3d.down.right" : (detached ? "smallcircle.filled.circle" : "arrow.triangle.branch"))
+                .font(.system(size: 9.5, weight: .semibold))
+            Text(Self.shortened(branch, maxWidth: maxWidth))
+                .font(NFont.monoSmall)
+                .lineLimit(1)
+        }
+        .foregroundStyle(color.fg)
+        .padding(.horizontal, 6)
+        .frame(height: 20)
+        .background(color.bg, in: RoundedRectangle(cornerRadius: 3, style: .continuous))
+        // Hugs its text: a long branch is shortened in the middle up front rather than the tag stretching to fill.
+        .fixedSize()
+        .help(help ?? (worktree ? "Worktree on \(branch)" : "On \(branch)"))
+    }
+
+    /// `feat/very-long-branch-name` → `feat/very…ch-name`, to fit roughly `maxWidth` points of 11.5pt monospace.
+    static func shortened(_ branch: String, maxWidth: CGFloat) -> String {
+        let limit = max(Int((maxWidth - 30) / 6.9), 8)
+        guard branch.count > limit else { return branch }
+        let head = (limit - 1) / 2 + 1, tail = limit - 1 - head
+        return String(branch.prefix(head)) + "…" + String(branch.suffix(tail))
+    }
+
+    static func describe(_ git: GitCheckout) -> String {
+        let path = git.root.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+        if git.isLinkedWorktree {
+            let owner = git.worktreeOwner.map { ", made by \($0)" } ?? ""
+            return "Worktree of \(git.repoName) on \(git.isDetached ? "a detached HEAD at " : "")\(git.refLabel)\(owner)\n\(path)"
+        }
+        return git.isDetached ? "\(git.repoName), detached at \(git.refLabel)" : "\(git.repoName) on \(git.refLabel)"
+    }
+}
+
+/// A session's branch: live from its checkout while running, else what the transcript recorded.
+struct SessionBranchTag: View {
+    var session: AgentSession
+    var maxWidth: CGFloat = 200
+
+    var body: some View {
+        if let git = session.checkout {
+            BranchTag(git, maxWidth: maxWidth)
+        } else if !session.branch.isEmpty {
+            BranchTag(branch: session.branch, maxWidth: maxWidth)
+        }
+    }
+}
+
+/// "Qoder worktree of local-observer", clickable to reveal the worktree folder.
+struct WorktreeValue: View {
+    var git: GitCheckout
+
+    var body: some View {
+        Button {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: git.root)])
+        } label: {
+            Text(git.worktreeOwner.map { "\($0) worktree of \(git.repoName)" } ?? "Worktree of \(git.repoName)")
+                .underline(color: N.text3)
+        }
+        .buttonStyle(.plain)
+        .help(git.root.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+    }
+}
+
+/// Branch as caption text, for rows too tight for a tag: "⑂ feat/x" (purple glyph for a worktree).
+struct InlineBranch: View {
+    var git: GitCheckout
+    var color: Color = N.text2
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: git.isLinkedWorktree ? "square.stack.3d.down.right" : "arrow.triangle.branch")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(git.isLinkedWorktree ? TagColor.purple.fg : color)
+            Text(git.refLabel).lineLimit(1).truncationMode(.middle)
+        }
+        .font(NFont.caption)
+        .foregroundStyle(color)
+        .help(BranchTag.describe(git))
     }
 }
 

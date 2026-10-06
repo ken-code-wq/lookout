@@ -52,6 +52,7 @@ struct InspectorView: View {
             if !server.pageTitle.isEmpty && server.pageTitle != server.projectName {
                 Text(server.pageTitle).font(NFont.small).foregroundStyle(N.text2)
             }
+            if let git = server.git { BranchTag(git, maxWidth: 300) }
         }
     }
 
@@ -105,6 +106,12 @@ struct InspectorView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(server.workingDirectory.isEmpty)
+            }
+            if let git = server.git {
+                PropertyRow(symbol: "arrow.triangle.branch", label: "Branch") { BranchTag(git) }
+                if git.isLinkedWorktree {
+                    PropertyRow(symbol: "square.stack.3d.down.right", label: "Worktree") { WorktreeValue(git: git) }
+                }
             }
             PropertyRow(symbol: "tag", label: "Type") {
                 Tag(text: server.projectType.rawValue, color: server.projectType.tag)

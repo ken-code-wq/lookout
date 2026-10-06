@@ -322,6 +322,8 @@ public struct AgentSession: Identifiable, Hashable, Sendable {
     public var costIsEstimated: Bool
     /// Tokens in the most recent request's prompt (input + cache), i.e. current context size.
     public var contextTokens: Int64?
+    /// The git checkout the session works in, read live for running sessions. Tells worktrees apart.
+    public var checkout: GitCheckout? = nil
 
     public init(
         id: String,
@@ -368,6 +370,9 @@ public struct AgentSession: Identifiable, Hashable, Sendable {
     }
 
     public var needsAttention: Bool { state == .needsInput || state == .failed }
+
+    /// True when the session runs in a linked worktree rather than the repository's main checkout.
+    public var isInWorktree: Bool { checkout?.isLinkedWorktree ?? false }
 }
 
 public struct AgentUsageEvent: Identifiable, Codable, Hashable, Sendable {

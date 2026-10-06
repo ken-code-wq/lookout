@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import LocalObserverCore
 
 struct ServersPage: View {
     @ObservedObject var state: AppState
@@ -230,6 +231,7 @@ private struct ServerFilterBar: View {
                 single("Origin", symbol: "play.square.stack", value: \.origin, all: ServerOrigin.allCases, title: \.rawValue)
                 single("Address", symbol: "network", value: \.exposure, all: ServerExposure.allCases, title: \.rawValue)
                 single("Port", symbol: "number", value: \.ports, all: PortRangeFilter.allCases, title: \.rawValue)
+                single("Checkout", symbol: "arrow.triangle.branch", value: \.checkout, all: ServerCheckoutFilter.allCases, title: \.rawValue)
                 single("Memory", symbol: "memorychip", value: \.memory, all: ServerMemoryFilter.allCases, title: \.title)
                 single("Uptime", symbol: "clock", value: \.uptime, all: ServerUptimeFilter.allCases, title: \.rawValue)
                 if filter.isNarrowed || !state.searchText.isEmpty {
@@ -381,8 +383,10 @@ private struct ServerRow: View {
                 if favorite {
                     Image(systemName: "star.fill").font(.system(size: 9.5)).foregroundStyle(TagColor.yellow.fg)
                 }
+                if let git = server.git { BranchTag(git, maxWidth: 160) }
                 if server.isManaged { Tag(text: "Launcher", color: .purple) }
-                if !server.pageTitle.isEmpty && server.pageTitle != server.projectName {
+                // The branch is what tells two checkouts apart; the page title moves to the inspector to make room.
+                if server.git == nil, !server.pageTitle.isEmpty && server.pageTitle != server.projectName {
                     Text(server.pageTitle).font(NFont.small).foregroundStyle(N.text3).lineLimit(1)
                 }
             }
@@ -533,6 +537,7 @@ private struct GalleryCard: View {
                 }
                 Text(server.pageTitle.isEmpty ? (server.displayPath.isEmpty ? server.processName : server.displayPath) : server.pageTitle)
                     .font(NFont.small).foregroundStyle(N.text2).lineLimit(1).truncationMode(.middle)
+                if let git = server.git { BranchTag(git, maxWidth: 260).padding(.top, 2) }
                 HStack(spacing: 5) {
                     Tag(text: ":\(server.port)", mono: true)
                     StatusTag(server: server, stopping: stopping)

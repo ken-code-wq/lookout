@@ -157,9 +157,12 @@ struct AgentPeekView: View {
             }
         }
         .padding(size == .small ? 10 : 12)
-        .frame(width: size.width)
+        .frame(width: prefs.peekWidth)
         // The slab uses the see-through variant (or frosted, per Settings); cards inside stay frosted for legibility.
         .liquidGlass(RoundedRectangle(cornerRadius: size == .small ? 22 : 28, style: .continuous), clear: prefs.peekClearGlass)
+        // Drag either side edge to resize; the layout steps between Small, Medium and Large as the width crosses them.
+        .overlay(alignment: .leading) { PeekResizeHandle(edge: .leading).frame(width: 7).padding(.vertical, 18) }
+        .overlay(alignment: .trailing) { PeekResizeHandle(edge: .trailing).frame(width: 7).padding(.vertical, 18) }
         .padding(8) // room for the window shadow around the glass
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: prefs.collapsedPeekGroups)
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: sessions.map(\.id))
@@ -272,7 +275,10 @@ struct AgentPeekView: View {
     /// One glyph that cycles Large, Medium, Small, so the size is a click away at every size.
     private var sizeButton: some View {
         Button {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { prefs.peekSize = size.next }
+            // From a dragged width, the button first snaps to its own preset, then cycles.
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                if prefs.peekWidth != Double(size.width) { prefs.peekWidth = Double(size.width) } else { prefs.peekSize = size.next }
+            }
         } label: {
             Text(size.letter)
                 .font(.system(size: 11, weight: .bold, design: .rounded))
@@ -283,7 +289,7 @@ struct AgentPeekView: View {
         .buttonStyle(.plain)
         .liquidGlass(Circle(), interactive: true)
         .contextMenu { sizePicker }
-        .help("\(size.title) size. Click for \(size.next.title.lowercased()), right-click to choose.")
+        .help("\(size.title) size. Click for \(size.next.title.lowercased()), right-click to choose, or drag Peek's side edges.")
         .accessibilityLabel("Peek size, \(size.title)")
     }
 
@@ -636,6 +642,12 @@ private struct PeekRow: View {
                         Text(session.projectName)
                         TimelineView(.periodic(from: .now, by: 30)) { ctx in
                             Text("· \(AgentFormat.duration(ctx.date.timeIntervalSince(session.startedAt)))")
+                        }
+                        // In a worktree, which branch it is: two agents in one repo otherwise look identical.
+                        if session.isInWorktree, let git = session.checkout {
+                            Image(systemName: "square.stack.3d.down.right").font(.system(size: 8.5, weight: .semibold))
+                                .foregroundStyle(TagColor.purple.fg)
+                            Text(git.refLabel).truncationMode(.middle).layoutPriority(-1)
                         }
                     }
                     .font(.system(size: 10.5))
@@ -996,5 +1008,64 @@ struct DockTileView: View {
             }
         }
         .frame(width: 128, height: 128)
+    }
+}
+
+/// Invisible strip on one side edge of Peek that resizes it by dragging. An AppKit view rather than a SwiftUI
+/// gesture: Peek moves when you drag its background, and only a view that refuses `mouseDownCanMoveWindow` keeps the
+/// window still while its edge is dragged. Double-click snaps to the nearest preset size.
+struct PeekResizeHandle: NSViewRepresentable {
+    var edge: HorizontalEdge
+
+    func makeNSView(context: Context) -> HandleView { HandleView(edge: edge) }
+    func updateNSView(_ view: HandleView, context: Context) { view.edge = edge }
+
+    final class HandleView: NSView {
+        var edge: HorizontalEdge
+        private var startMouseX: CGFloat = 0
+        private var startWidth: Double = 0
+
+        init(edge: HorizontalEdge) {
+            self.edge = edge
+            super.init(frame: .zero)
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+        override var mouseDownCanMoveWindow: Bool { false }
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+        override func resetCursorRects() {
+            addCursorRect(bounds, cursor: .resizeLeftRight)
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            if event.clickCount == 2 {
+                MainActor.assumeIsolated {
+                    let prefs = Preferences.shared
+                    let nearest = PeekSize.allCases.min { abs(Double($0.width) - prefs.peekWidth) < abs(Double($1.width) - prefs.peekWidth) } ?? .large
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { prefs.peekWidth = Double(nearest.width) }
+                }
+                return
+            }
+            // Screen coordinates: the window itself moves while its leading edge is dragged.
+            startMouseX = NSEvent.mouseLocation.x
+            MainActor.assumeIsolated {
+                startWidth = Preferences.shared.peekWidth
+                LiveSurfaces.shared.beginPeekResize(pinning: edge == .leading ? .trailing : .leading)
+            }
+        }
+
+        override func mouseDragged(with event: NSEvent) {
+            let dx = Double(NSEvent.mouseLocation.x - startMouseX)
+            let width = startWidth + (edge == .leading ? -dx : dx)
+            MainActor.assumeIsolated {
+                let clamped = min(max(width, PeekSize.widthRange.lowerBound), PeekSize.widthRange.upperBound).rounded()
+                if Preferences.shared.peekWidth != clamped { Preferences.shared.peekWidth = clamped }
+            }
+        }
+
+        override func mouseUp(with event: NSEvent) {
+            MainActor.assumeIsolated { LiveSurfaces.shared.endPeekResize() }
+        }
     }
 }
