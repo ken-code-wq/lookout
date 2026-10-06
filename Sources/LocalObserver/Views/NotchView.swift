@@ -138,30 +138,17 @@ struct NotchRootView: View {
             }
             // Drawn as blurred pixels rather than with .shadow: in this transparent, borderless panel a layer shadow
             // shows while the spring animates and then drops out once the view settles.
-            // Two layers, a wide soft one and a tight one at the edge, each a little wider than the shape so the
-            // blur isn't mostly hidden underneath it.
             .background {
                 let open = controller.mode != .compact
-                ZStack {
-                    shape.fill(Color.black)
-                        .frame(width: size.width + 24, height: size.height + 6)
-                        // Room around the shape before blurring: a blur is cut at its view's bounds, which left a
-                        // hard edge where the shadow should fade out.
-                        .padding(50)
-                        .blur(radius: 18)
-                        .padding(-50)
-                        .offset(y: 12)
-                        .opacity(0.42)
-                    shape.fill(Color.black)
-                        .frame(width: size.width + 6, height: size.height)
-                        .padding(20)
-                        .blur(radius: 5)
-                        .padding(-20)
-                        .offset(y: 4)
-                        .opacity(0.35)
-                }
-                .frame(width: size.width, height: size.height, alignment: .top)
-                .opacity(open ? 1 : 0)
+                // One soft layer the size of the shape, nudged down a little: a lift, not a slab. Padded before
+                // blurring so the blur has room to fade instead of being cut at the shape's bounds.
+                shape.fill(Color.black)
+                    .frame(width: size.width, height: size.height)
+                    .padding(24)
+                    .blur(radius: 8)
+                    .padding(-24)
+                    .offset(y: 3)
+                    .opacity(open ? 0.3 : 0)
                 .allowsHitTesting(false)
             }
             .onTapGesture {
