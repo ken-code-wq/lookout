@@ -131,6 +131,9 @@ enum SnapshotHarness {
                 ("settings", AnyView(AgentSettingsView(store: store)), CGSize(width: 620, height: 560)),
                 ("menubar", AnyView(MenuBarView(state: makeState(), agentStore: store)), CGSize(width: 360, height: 1300)),
                 ("servers", AnyView(ServersPage(state: makeState())), CGSize(width: width, height: 700)),
+                ("server-logs", AnyView(serverLogs()), CGSize(width: 420, height: 1250)),
+                ("launchers", AnyView(LaunchersPage(state: makeState())), CGSize(width: width, height: 500)),
+                ("server-logs-sheet", AnyView(serverLogsSheet()), CGSize(width: 780, height: 900)),
                 ("repos", AnyView(reposPage()), CGSize(width: width, height: 900)),
                 ("repo-inspector", AnyView(repoInspector()), CGSize(width: 360, height: 1000)),
                 ("pulls", AnyView(PullRequestsPage(store: RepoStore.shared)), CGSize(width: width, height: 800)),
@@ -508,6 +511,17 @@ enum SnapshotHarness {
         let repos = RepoStore.shared
         repos.selection = nil
         return ReposPage(store: repos)
+    }
+
+    /// The server inspector for the first server, which in demo mode runs from a launcher and has logs.
+    @ViewBuilder private static func serverLogs() -> some View {
+        let state = makeState()
+        if let server = state.servers.first { InspectorView(state: state, server: server) }
+    }
+
+    @ViewBuilder private static func serverLogsSheet() -> some View {
+        let state = makeState()
+        if let launcher = state.managed.last { ServerLogsSheet(state: state, launcher: launcher) }
     }
 
     @ViewBuilder private static func repoInspector() -> some View {

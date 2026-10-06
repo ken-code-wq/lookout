@@ -115,6 +115,7 @@ final class LiveSurfaces: NSObject, NSWindowDelegate {
         case "usage": openMain(.agentUsage)
         case "limits": openMain(.agentLimits)
         case "servers": openMain(.all)
+        case "launchers": openMain(.launchers)
         case "repos": openMain(.repos)
         case "pulls": openMain(.pullRequests)
         case "github": openMain(.github)

@@ -21,17 +21,8 @@ struct InspectorView: View {
                 EnvSection(server: server)
                 commandBlock.padding(.top, 18)
                 ShareSection(port: server.port).padding(.top, 18)
-                if let launcher {
-                    RequestLogView(path: launcher.logPath).padding(.top, 18)
-                    LogTail(path: launcher.logPath).padding(.top, 18)
-                } else if !server.workingDirectory.isEmpty {
-                    Button { state.draftLauncher(from: server) } label: {
-                        Label("Save as launcher", systemImage: "plus.square.on.square").labelStyle(TightLabelStyle())
-                    }
-                    .buttonStyle(GhostButtonStyle(tint: N.text2))
-                    .padding(.top, 12)
-                    .padding(.leading, -7)
-                }
+                if let launcher { RequestLogView(path: launcher.logPath).padding(.top, 18) }
+                ServerLogsSection(state: state, server: server).padding(.top, 18)
                 danger.padding(.top, 24)
             }
             .padding(20)
@@ -165,57 +156,6 @@ struct InspectorView: View {
     }
 }
 
-/// Live tail of a launcher's log file.
-struct LogTail: View {
-    var path: String
-    @State private var text = ""
-    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Output").font(.system(size: 12, weight: .medium)).foregroundStyle(N.text2)
-                Spacer()
-                IconButton(symbol: "arrow.up.forward.app", help: "Open log file", size: 22) {
-                    NSWorkspace.shared.open(URL(fileURLWithPath: path))
-                }
-            }
-            ScrollViewReader { proxy in
-                ScrollView {
-                    Text(text.isEmpty ? "No output yet." : text)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(text.isEmpty ? N.text3 : N.text)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(10)
-                    Color.clear.frame(height: 1).id("end")
-                }
-                .scrollIndicators(.never)
-                .frame(height: 200)
-                .background(N.bgSoft, in: RoundedRectangle(cornerRadius: N.radius, style: .continuous))
-                .onChange(of: text) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
-            }
-        }
-        .onAppear(perform: load)
-        .onReceive(timer) { _ in load() }
-    }
-
-    private func load() {
-        guard let handle = FileHandle(forReadingAtPath: path) else { return }
-        defer { try? handle.close() }
-        let size = (try? handle.seekToEnd()) ?? 0
-        try? handle.seek(toOffset: size > 12_000 ? size - 12_000 : 0)
-        let data = (try? handle.readToEnd()) ?? Data()
-        let fresh = Self.stripANSI(String(decoding: data, as: UTF8.self))
-        if fresh != text { text = fresh }
-    }
-
-    static func stripANSI(_ s: String) -> String {
-        s.replacingOccurrences(of: "\u{1B}\\[[0-9;?]*[A-Za-z]", with: "", options: .regularExpression)
-    }
-}
-
-
 /// Sharing a server on a public URL through cloudflared or ngrok.
 struct ShareSection: View {
     var port: Int
@@ -318,7 +258,7 @@ struct RequestLogView: View {
         defer { try? handle.close() }
         let size = (try? handle.seekToEnd()) ?? 0
         try? handle.seek(toOffset: size > 200_000 ? size - 200_000 : 0)
-        let text = LogTail.stripANSI(String(decoding: (try? handle.readToEnd()) ?? Data(), as: UTF8.self))
+        let text = ServerLogFraming.plainText(String(decoding: (try? handle.readToEnd()) ?? Data(), as: UTF8.self))
         let parsed = ServerRequest.parse(text)
         if parsed != requests { requests = parsed }
         errors = ServerRequest.errorLines(text).count
