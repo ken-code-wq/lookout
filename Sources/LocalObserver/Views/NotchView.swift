@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import LocalObserverCore
+import LocalObserverRepos
 import LocalObserverShelf
 
 /// Notch silhouette: small outward "ears" where it meets the top edge, rounded bottom corners.
@@ -50,6 +51,7 @@ struct NotchRootView: View {
     @ObservedObject private var timer = FocusTimer.shared
     @ObservedObject private var media = MediaController.shared
     @ObservedObject private var keepAwake = KeepAwake.shared
+    @ObservedObject private var repos = RepoStore.shared
     /// Its own pillar: the Shelf tab reads nothing from the agent or server stores.
     var shelf: ShelfStore = .shared
     @State private var dropTargeted = false
@@ -65,7 +67,7 @@ struct NotchRootView: View {
         case .sound: return 214
         // Sized to the content (+ card padding and page insets) so nothing is ever clipped.
         case .limits: return min(NotchLimitsPage.height(agentStore: agentStore, prefs: prefs) + 24 + 22 + 2, 440)
-        case .agents, .usage, .servers: return 214
+        case .agents, .usage, .servers, .repos: return 214
         case .shelf: return 256
         }
     }
@@ -138,7 +140,13 @@ struct NotchRootView: View {
             .onTapGesture {
                 switch controller.mode {
                 case .compact: controller.expand()
-                case .alert: controller.open(sessionID: controller.alert?.sessionID)
+                case .alert:
+                    if let url = controller.alert?.url {
+                        ProcessManager.openURL(url)
+                        controller.collapse()
+                    } else {
+                        controller.open(sessionID: controller.alert?.sessionID)
+                    }
                 case .hud, .expanded: break
                 }
             }
@@ -208,6 +216,7 @@ struct NotchRootView: View {
         case .todayCost: return agentStore.todayTotals.hasCost
         case .todayTokens: return agentStore.todayTotals.processed > 0
         case .servers: return !state.visibleServers.isEmpty
+        case .checks: return !repos.myPulls.isEmpty || !repos.reviewRequests.isEmpty
         }
     }
 
@@ -249,6 +258,8 @@ struct NotchRootView: View {
                     .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { controller.limitRingFrame = $0 }
                     .onDisappear { controller.limitRingFrame = .zero }
             }
+        case .checks:
+            checksWing
         case .todayCost:
             let today = agentStore.todayTotals
             if today.hasCost {
@@ -272,6 +283,27 @@ struct NotchRootView: View {
                 .foregroundStyle(NotchColor.text)
             }
         }
+    }
+
+    /// Your pull requests at a glance: red with a count when checks fail, a pulse while they run, else green.
+    @ViewBuilder private var checksWing: some View {
+        let failing = repos.failingPulls.count, running = repos.runningPulls.count, reviews = repos.reviewRequests.count
+        HStack(spacing: 4) {
+            if failing > 0 {
+                Image(systemName: "xmark.circle.fill").font(.system(size: 12, weight: .semibold)).foregroundStyle(NotchColor.red)
+                Text("\(failing)").font(.system(size: 12, weight: .semibold)).monospacedDigit().foregroundStyle(NotchColor.red)
+            } else if running > 0 {
+                PulsingDot(color: NotchColor.orange)
+                Text("\(running)").font(.system(size: 12, weight: .semibold)).monospacedDigit().foregroundStyle(NotchColor.text)
+            } else if reviews > 0 {
+                Image(systemName: "eye.fill").font(.system(size: 11, weight: .semibold)).foregroundStyle(Color(red: 0.45, green: 0.66, blue: 1))
+                Text("\(reviews)").font(.system(size: 12, weight: .semibold)).monospacedDigit().foregroundStyle(NotchColor.text)
+            } else {
+                Image(systemName: "checkmark.circle.fill").font(.system(size: 12, weight: .semibold)).foregroundStyle(NotchColor.green)
+                Text("\(repos.myPulls.count)").font(.system(size: 12, weight: .semibold)).monospacedDigit().foregroundStyle(NotchColor.text)
+            }
+        }
+        .help("\(repos.myPulls.count) open, \(failing) failing, \(running) running, \(reviews) waiting on your review")
     }
 
     /// Countdown that takes over the right wing while a timer runs.
@@ -303,6 +335,12 @@ struct NotchRootView: View {
                             AgentIconView(agent: agent, size: 16)
                                 .frame(width: 22, height: 22)
                                 .background(Color.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        } else if let symbol = alert.symbol {
+                            Image(systemName: symbol)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(color(for: alert.kind))
+                                .frame(width: 22, height: 22)
+                                .background(Color.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                         }
                     }
                     Spacer(minLength: notch.width)
@@ -329,6 +367,9 @@ struct NotchRootView: View {
         case .finished: return NotchColor.green
         case .limit: return NotchColor.orange
         case .reset: return NotchColor.green
+        case .checksFailed: return NotchColor.red
+        case .checksPassed: return NotchColor.green
+        case .review: return Color(red: 0.45, green: 0.66, blue: 1)
         }
     }
 
@@ -367,6 +408,7 @@ struct NotchRootView: View {
                 case .agents: agentsTab
                 case .usage: usageTab
                 case .limits: limitsTab
+                case .repos: reposTab
                 case .servers: serversTab
                 case .shelf: ShelfNotchPage(store: shelf) { controller.collapse() }
                 case .media: NotchMediaPage()
@@ -391,6 +433,7 @@ struct NotchRootView: View {
         case .agents: return .agentActivity
         case .usage: return .agentUsage
         case .limits: return .agentLimits
+        case .repos: return .pullRequests
         case .servers: return .all
         case .shelf, .media, .sound: return .agentActivity
         }
@@ -407,10 +450,14 @@ struct NotchRootView: View {
                         Image(systemName: tab.symbol)
                             .font(.system(size: 11.5, weight: .semibold))
                             .foregroundStyle(selected ? NotchColor.text : NotchColor.text2)
-                            .frame(width: 34, height: 24)
+                            .frame(width: 31, height: 24)
                             .background(selected ? Color.white.opacity(0.16) : .clear, in: Capsule())
                         if tab == .agents && !agentStore.attentionSessions.isEmpty {
                             Circle().fill(NotchColor.pink).frame(width: 5, height: 5).offset(x: -6, y: 4)
+                        }
+                        if tab == .repos && !repos.pullsNeedingYou.isEmpty {
+                            Circle().fill(repos.failingPulls.isEmpty ? Color(red: 0.45, green: 0.66, blue: 1) : NotchColor.red)
+                                .frame(width: 5, height: 5).offset(x: -5, y: 4)
                         }
                     }
                     .contentShape(Capsule())
@@ -570,6 +617,46 @@ struct NotchRootView: View {
         NotchCard { NotchLimitsPage(agentStore: agentStore) }
     }
 
+    private var reposTab: some View {
+        let pulls = Array((repos.pullsNeedingYou + repos.runningPulls + repos.myPulls)
+            .reduce(into: [PullRequest]()) { list, pr in if !list.contains(where: { $0.url == pr.url }) { list.append(pr) } }
+            .prefix(4))
+        let unsaved = repos.attentionRepos.filter(\.hasLocalOnlyWork)
+        return HStack(alignment: .top, spacing: 10) {
+            NotchCard {
+                VStack(alignment: .leading, spacing: 2) {
+                    NotchCardTitle(title: "Pull requests", value: "\(repos.pulls.count)")
+                    if pulls.isEmpty {
+                        NotchEmpty(symbol: repos.gitHub.login == nil ? "person.crop.circle.badge.questionmark" : "checkmark.circle",
+                                   text: repos.gitHub.login == nil ? "Sign in with gh auth login" : "Nothing open")
+                    } else {
+                        ForEach(pulls) { pull in
+                            NotchPullRow(pull: pull) { controller.collapse() }
+                        }
+                    }
+                }
+            }
+            .frame(width: (expandedWidth - 72) * 0.56)
+            NotchCard {
+                VStack(alignment: .leading, spacing: 10) {
+                    NotchStatRow(symbol: "xmark", tint: .red, title: "Failing checks", value: "\(repos.failingPulls.count)")
+                    NotchStatRow(symbol: "eye.fill", tint: .blue, title: "Reviews for you", value: "\(repos.reviewRequests.count)")
+                    NotchStatRow(symbol: "checkmark", tint: .green, title: "Ready to merge", value: "\(repos.readyPulls.count)")
+                    Rectangle().fill(Color.white.opacity(0.07)).frame(height: 1)
+                    Button {
+                        LiveSurfaces.shared.openMain(.repos)
+                        controller.collapse()
+                    } label: {
+                        NotchStatRow(symbol: "pencil", tint: .orange, title: "Unsaved work", value: "\(unsaved.count)")
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(unsaved.prefix(6).map { "\($0.name): \($0.changes.summary)" }.joined(separator: "\n"))
+                }
+            }
+        }
+    }
+
     private var serversTab: some View {
         let servers = state.visibleServers.sorted { $0.port < $1.port }
         return NotchCard {
@@ -710,8 +797,11 @@ private struct NotchSessionRow: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(session.title).font(.system(size: 12, weight: .medium)).foregroundStyle(NotchColor.text).lineLimit(1)
                     TimelineView(.periodic(from: .now, by: 30)) { context in
-                        Text("\(session.projectName) · \(AgentFormat.duration(context.date.timeIntervalSince(session.startedAt)))")
-                            .font(.system(size: 10.5)).foregroundStyle(NotchColor.text2).lineLimit(1)
+                        HStack(spacing: 5) {
+                            Text("\(session.projectName) · \(AgentFormat.duration(context.date.timeIntervalSince(session.startedAt)))")
+                                .font(.system(size: 10.5)).foregroundStyle(NotchColor.text2).lineLimit(1)
+                            if session.isInWorktree, let git = session.checkout { NotchBranch(git: git) }
+                        }
                     }
                 }
                 Spacer(minLength: 6)
@@ -754,6 +844,8 @@ private struct NotchServerRow: View {
         HStack(spacing: 8) {
             FaviconView(server: server, size: 16)
             Text(server.projectName).font(.system(size: 12)).foregroundStyle(NotchColor.text).lineLimit(1)
+                .layoutPriority(1)
+            if let git = server.git { NotchBranch(git: git) }
             Spacer(minLength: 4)
             if hover {
                 Button { state.stop(server) } label: {
@@ -812,6 +904,69 @@ struct RingGauge: View {
                 .trim(from: 0, to: min(max(fraction, 0), 1))
                 .stroke(color, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
                 .rotationEffect(.degrees(-90))
+        }
+    }
+}
+
+/// Branch on the notch's dark glass; worktrees get a purple glyph.
+struct NotchBranch: View {
+    var git: GitCheckout
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: git.isLinkedWorktree ? "square.stack.3d.down.right" : "arrow.triangle.branch")
+                .font(.system(size: 8.5, weight: .semibold))
+                .foregroundStyle(git.isLinkedWorktree ? Color(red: 0.74, green: 0.6, blue: 1) : NotchColor.text3)
+            Text(git.refLabel).lineLimit(1).truncationMode(.middle)
+        }
+        .font(.system(size: 10.5))
+        .foregroundStyle(NotchColor.text3)
+        .help(BranchTag.describe(git))
+    }
+}
+
+private struct NotchPullRow: View {
+    var pull: PullRequest
+    var done: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button {
+            ProcessManager.openURL(pull.checks == .failure ? pull.url + "/checks" : pull.url)
+            done()
+        } label: {
+            HStack(spacing: 9) {
+                Image(systemName: pull.checks.symbol)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(color)
+                    .frame(width: 17)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(pull.title).font(.system(size: 12, weight: .medium)).foregroundStyle(NotchColor.text).lineLimit(1)
+                    Text("\(pull.repoName) #\(pull.number)" + (pull.role == .reviewRequested ? " · review for you" : ""))
+                        .font(.system(size: 10.5)).foregroundStyle(NotchColor.text2).lineLimit(1)
+                }
+                Spacer(minLength: 6)
+                if pull.isReadyToMerge {
+                    Text("Ready").font(.system(size: 11, weight: .medium)).foregroundStyle(NotchColor.green)
+                } else if pull.role == .reviewRequested {
+                    Text("Review").font(.system(size: 11, weight: .medium)).foregroundStyle(Color(red: 0.45, green: 0.66, blue: 1))
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 38)
+            .background(hover ? NotchColor.cardHover : .clear, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .help(pull.checks.title)
+    }
+
+    private var color: Color {
+        switch pull.checks {
+        case .success: return NotchColor.green
+        case .failure: return NotchColor.red
+        case .pending: return NotchColor.orange
+        case .none: return NotchColor.text3
         }
     }
 }

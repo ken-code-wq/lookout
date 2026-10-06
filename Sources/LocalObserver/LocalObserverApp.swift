@@ -3,8 +3,10 @@ import AppKit
 import WidgetKit
 import LocalObserverCore
 import LocalObserverShelf
+import LocalObserverRepos
+import UserNotifications
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         #if DEBUG
         if let directory = SnapshotHarness.directory {
@@ -20,7 +22,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated {
             ShelfStore.shared.widgetDidChange = { WidgetCenter.shared.reloadTimelines(ofKind: ShelfWidgetSnapshot.widgetKind) }
             ShelfStore.shared.start()
+            // Repos too: it scans git and asks GitHub on its own schedule, whatever else is running.
+            RepoStore.shared.start()
+            RepoNotifier.shared.attach(to: RepoStore.shared)
         }
+        if AgentNotifier.isAvailable { UNUserNotificationCenter.current().delegate = self }
+    }
+
+    /// Clicking a pull request notification opens it on GitHub; any other brings Lookout forward.
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        let url = response.notification.request.content.userInfo["url"] as? String
+        DispatchQueue.main.async {
+            if let url, let link = URL(string: url) { NSWorkspace.shared.open(link) } else { NSApp.activate(ignoringOtherApps: true) }
+        }
+        completionHandler()
+    }
+
+    /// Show banners even while Lookout is the frontmost app.
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
     }
 
     /// Clicks on the desktop widgets arrive as `localobserver://` URLs.
@@ -64,7 +86,11 @@ struct LocalObserverApp: App {
             }
             CommandGroup(after: .toolbar) {
                 Button("Refresh") {
-                    if state.sidebar.isAgentPage { agentStore.refresh() } else { state.refresh() }
+                    if state.sidebar.isAgentPage { agentStore.refresh() }
+                    else if state.sidebar == .github { GitHubStore.shared.refreshCurrent() }
+                    else if state.sidebar == .cleanup { DiskCoordinator.shared.scan() }
+                    else if state.sidebar.isRepoPage { RepoStore.shared.refresh(); RepoStore.shared.refreshGitHub() }
+                    else { state.refresh() }
                 }
                     .keyboardShortcut("r")
                 Picker("View", selection: $state.viewMode) {
@@ -97,6 +123,25 @@ struct LocalObserverApp: App {
                 }
                 .keyboardShortcut("j")
                 .disabled(agentStore.selectedSession?.process?.host == nil)
+            }
+            CommandMenu("Repos") {
+                Button("Repositories") { state.sidebar = .repos }
+                    .keyboardShortcut("4", modifiers: [.command, .option])
+                Button("GitHub") { state.sidebar = .github }
+                    .keyboardShortcut("5", modifiers: [.command, .option])
+                Button("Pull Requests") { state.sidebar = .pullRequests }
+                    .keyboardShortcut("6", modifiers: [.command, .option])
+                Divider()
+                Button("Fetch All Repositories") { RepoStore.shared.fetchAll() }
+                Button("Refresh Pull Requests") { RepoStore.shared.refreshGitHub() }
+                    .keyboardShortcut("p", modifiers: [.command, .shift])
+                Divider()
+                let repo = state.sidebar == .repos ? RepoStore.shared.selected : nil
+                Button("Open Repository in Editor") { repo.map { RepoActions.openEditor($0.root) } }
+                    .keyboardShortcut("e")
+                    .disabled(repo == nil)
+                Button("Pull Selected Repository") { repo.map { RepoStore.shared.pull($0) } }
+                    .disabled(repo?.status.upstream == nil)
             }
             CommandMenu("Shelf") {
                 // The global shortcut fires first; this just shows it in the menu.
@@ -152,6 +197,7 @@ struct LocalObserverApp: App {
 private struct MenuBarLabel: View {
     @ObservedObject var state: AppState
     @ObservedObject var agentStore: AgentStore
+    @ObservedObject var repoStore: RepoStore = .shared
     @ObservedObject var prefs = Preferences.shared
     @Environment(\.openWindow) private var openWindow
 
@@ -194,6 +240,9 @@ private struct MenuBarLabel: View {
             return today.hasCost ? (item, AgentFormat.cost(today.cost)) : nil
         case .todayTokens:
             return today.processed > 0 ? (item, AgentFormat.compact(Double(today.processed))) : nil
+        case .pullRequests:
+            let count = repoStore.pullsNeedingYou.count
+            return count > 0 ? (item, "\(count)") : nil
         }
     }
 }

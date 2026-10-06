@@ -13,6 +13,10 @@ struct AgentSettingsView: View {
                 .tabItem { Label("Agents", systemImage: "sparkles") }
             LimitsPane(store: store)
                 .tabItem { Label("Limits", systemImage: "gauge.with.dots.needle.33percent") }
+            RepoSettingsPane()
+                .tabItem { Label("Repos", systemImage: "square.stack.3d.up") }
+            DiskSettingsPane()
+                .tabItem { Label("Disk", systemImage: "internaldrive") }
             MenuBarDockPane()
                 .tabItem { Label("Menu Bar & Notch", systemImage: "menubar.dock.rectangle") }
             ShelfSettingsPane()
@@ -340,7 +344,7 @@ private struct MenuBarDockPane: View {
                     Toggle("Show on every Space", isOn: $prefs.peekOnAllSpaces).toggleStyle(.switch).labelsHidden()
                 }
                 SettingsDivider()
-                SettingsRow(title: "Size", detail: "Small keeps one line per agent and limit. The L, M, S button in Peek switches too.") {
+                SettingsRow(title: "Size", detail: "Or drag either side edge of Peek to any width; double-click an edge to snap back. Small keeps one line per agent and limit.") {
                     Picker("Size", selection: $prefs.peekSize) {
                         ForEach(PeekSize.allCases) { Text($0.title).tag($0) }
                     }

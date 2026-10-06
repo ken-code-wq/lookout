@@ -2,7 +2,7 @@ import Foundation
 import AppKit
 import SwiftUI
 
-/// Pages of the main window, grouped in the sidebar as Home, then one section per pillar: Agents, Servers, Shelf.
+/// Pages of the main window, grouped in the sidebar as Home, then one section per pillar: Agents, Repos, Servers.
 enum SidebarItem: Hashable {
     case home
     case all
@@ -11,21 +11,29 @@ enum SidebarItem: Hashable {
     case agentActivity
     case agentUsage
     case agentLimits
+    case repos
+    case github
+    case pullRequests
     case group(TypeGroup)
     case shelf
     case clipboard
+    case cleanup
 
     var title: String {
         switch self {
         case .home: return "Dashboard"
         case .shelf: return "Shelf"
         case .clipboard: return "Clipboard"
+        case .cleanup: return "Cleanup"
         case .all: return "All servers"
         case .favorites: return "Favorites"
         case .launchers: return "Launchers"
         case .agentActivity: return "Sessions"
         case .agentUsage: return "Usage"
         case .agentLimits: return "Plan limits"
+        case .repos: return "Repositories"
+        case .github: return "GitHub"
+        case .pullRequests: return "Pull requests"
         case .group(let g): return g.rawValue
         }
     }
@@ -35,12 +43,16 @@ enum SidebarItem: Hashable {
         case .home: return "square.grid.2x2"
         case .shelf: return "tray.full"
         case .clipboard: return "doc.on.clipboard"
+        case .cleanup: return "internaldrive"
         case .all: return "server.rack"
         case .favorites: return "star"
         case .launchers: return "play.square.stack"
         case .agentActivity: return "waveform.path.ecg"
         case .agentUsage: return "chart.xyaxis.line"
         case .agentLimits: return "gauge.with.dots.needle.33percent"
+        case .repos: return "square.stack.3d.up"
+        case .github: return "chevron.left.forwardslash.chevron.right"
+        case .pullRequests: return "arrow.triangle.pull"
         case .group(let g): return g.symbol
         }
     }
@@ -61,6 +73,8 @@ enum SidebarItem: Hashable {
     }
 
     var isShelfPage: Bool { self == .shelf || self == .clipboard }
+
+    var isRepoPage: Bool { self == .repos || self == .github || self == .pullRequests }
 }
 
 enum ViewMode: String, CaseIterable, Identifiable {
@@ -285,7 +299,7 @@ final class AppState: ObservableObject {
     var filtered: [ServerEntry] {
         var list = visibleServers
         switch sidebar {
-        case .all, .launchers, .agentActivity, .agentUsage, .agentLimits, .home, .shelf, .clipboard: break
+        case .all, .launchers, .agentActivity, .agentUsage, .agentLimits, .home, .shelf, .clipboard, .repos, .github, .pullRequests, .cleanup: break
         case .favorites: list = list.filter { favorites.contains($0.port) }
         case .group(let g): list = list.filter { $0.projectType.group == g }
         }
@@ -293,7 +307,8 @@ final class AppState: ObservableObject {
         let q = searchText.trimmingCharacters(in: .whitespaces).lowercased()
         if !q.isEmpty {
             list = list.filter {
-                [$0.projectName, $0.processName, $0.command, String($0.port), $0.workingDirectory, $0.pageTitle]
+                [$0.projectName, $0.processName, $0.command, String($0.port), $0.workingDirectory, $0.pageTitle,
+                 $0.git?.refLabel ?? ""]
                     .contains { $0.lowercased().contains(q) }
             }
         }
@@ -335,7 +350,7 @@ final class AppState: ObservableObject {
         case .all: return visibleServers.count
         case .favorites: return visibleServers.filter { favorites.contains($0.port) }.count
         case .launchers: return managed.count
-        case .agentActivity, .agentUsage, .agentLimits, .home, .shelf, .clipboard: return 0
+        case .agentActivity, .agentUsage, .agentLimits, .home, .shelf, .clipboard, .repos, .github, .pullRequests, .cleanup: return 0
         case .group(let g): return visibleServers.filter { $0.projectType.group == g }.count
         }
     }

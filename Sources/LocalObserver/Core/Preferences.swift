@@ -4,7 +4,8 @@ import LocalObserverCore
 
 /// Pieces that can appear in the menu bar title, left to right.
 enum MenuBarItem: String, CaseIterable, Identifiable, Codable {
-    case servers, agents, attention, limit, todayCost, todayTokens
+    // Agents first: the title reads left to right in this order.
+    case agents, attention, limit, todayCost, todayTokens, pullRequests, servers
 
     var id: String { rawValue }
     var title: String {
@@ -15,6 +16,7 @@ enum MenuBarItem: String, CaseIterable, Identifiable, Codable {
         case .limit: return "Tightest plan limit"
         case .todayCost: return "Today's cost"
         case .todayTokens: return "Today's tokens"
+        case .pullRequests: return "Pull requests that need you"
         }
     }
     var detail: String {
@@ -25,6 +27,7 @@ enum MenuBarItem: String, CaseIterable, Identifiable, Codable {
         case .limit: return "Highest used percentage across your plan windows"
         case .todayCost: return "Estimated at API prices when agents do not report cost"
         case .todayTokens: return "Processed tokens since midnight"
+        case .pullRequests: return "Failing checks or requested changes on yours, and reviews you owe"
         }
     }
     var symbol: String {
@@ -35,13 +38,14 @@ enum MenuBarItem: String, CaseIterable, Identifiable, Codable {
         case .limit: return "gauge.with.dots.needle.33percent"
         case .todayCost: return "dollarsign.circle"
         case .todayTokens: return "number"
+        case .pullRequests: return "arrow.triangle.pull"
         }
     }
 }
 
 /// Sections of the menu bar popover. Order is user-defined.
 enum MenuSection: String, CaseIterable, Identifiable, Codable {
-    case today, usage, agents, limits, sound, servers, launchers, shelf
+    case today, usage, agents, limits, repos, sound, servers, launchers, shelf, disk
 
     var id: String { rawValue }
     var title: String {
@@ -51,9 +55,11 @@ enum MenuSection: String, CaseIterable, Identifiable, Codable {
         case .sound: return "Sound"
         case .agents: return "Agents"
         case .limits: return "Limits"
+        case .repos: return "Repos"
         case .servers: return "Servers"
         case .launchers: return "Launchers"
         case .shelf: return "Shelf"
+        case .disk: return "Disk"
         }
     }
     var symbol: String {
@@ -63,16 +69,18 @@ enum MenuSection: String, CaseIterable, Identifiable, Codable {
         case .sound: return "slider.horizontal.3"
         case .agents: return "sparkles"
         case .limits: return "gauge.with.dots.needle.33percent"
+        case .repos: return "arrow.triangle.pull"
         case .servers: return "server.rack"
         case .launchers: return "play.square.stack"
         case .shelf: return "tray.full"
+        case .disk: return "internaldrive"
         }
     }
 }
 
 /// What sits beside the notch while it's closed.
 enum NotchWing: String, CaseIterable, Identifiable {
-    case none, agents, limit, todayCost, todayTokens, servers, nowPlaying
+    case none, agents, limit, todayCost, todayTokens, checks, servers, nowPlaying
 
     var id: String { rawValue }
     var title: String {
@@ -83,6 +91,7 @@ enum NotchWing: String, CaseIterable, Identifiable {
         case .limit: return "Plan limits"
         case .todayCost: return "Today's cost"
         case .todayTokens: return "Today's tokens"
+        case .checks: return "Pull request checks"
         case .servers: return "Server count"
         }
     }
@@ -90,7 +99,7 @@ enum NotchWing: String, CaseIterable, Identifiable {
 
 /// Pages of the open notch.
 enum NotchTab: String, CaseIterable, Identifiable {
-    case agents, usage, limits, servers, shelf, media, sound
+    case agents, usage, limits, repos, servers, shelf, media, sound
 
     var id: String { rawValue }
     var title: String {
@@ -100,6 +109,7 @@ enum NotchTab: String, CaseIterable, Identifiable {
         case .agents: return "Agents"
         case .usage: return "Usage"
         case .limits: return "Limits"
+        case .repos: return "Repos"
         case .servers: return "Servers"
         case .shelf: return "Shelf"
         }
@@ -109,6 +119,7 @@ enum NotchTab: String, CaseIterable, Identifiable {
         case .agents: return "sparkles"
         case .usage: return "chart.bar.fill"
         case .limits: return "gauge.with.dots.needle.67percent"
+        case .repos: return "arrow.triangle.pull"
         case .servers: return "server.rack"
         case .media: return "music.note"
         case .sound: return "slider.horizontal.3"
@@ -204,6 +215,16 @@ enum PeekSize: String, CaseIterable, Identifiable, Codable {
         let all = Self.allCases
         return all[((all.firstIndex(of: self) ?? 0) + 1) % all.count]
     }
+
+    /// How narrow and wide Peek can be dragged.
+    static let widthRange: ClosedRange<Double> = 190...460
+
+    /// The layout for a dragged width: each mode takes over from the midpoint between its preset and the next.
+    init(width: Double) {
+        if width < Double(PeekSize.small.width + PeekSize.medium.width) / 2 { self = .small }
+        else if width < Double(PeekSize.medium.width + PeekSize.large.width) / 2 { self = .medium }
+        else { self = .large }
+    }
 }
 
 enum KeepAwakeMode: String, CaseIterable, Identifiable {
@@ -224,6 +245,7 @@ enum DockBadge: String, CaseIterable, Identifiable {
     case attention = "Agents that need you"
     case agents = "Running agents"
     case limit = "Tightest limit %"
+    case pullRequests = "Pull requests that need you"
     case servers = "Server count"
     var id: String { rawValue }
 }
@@ -255,7 +277,21 @@ final class Preferences: ObservableObject {
     /// Agent Peek's outer glass: the see-through Liquid Glass variant, or frosted.
     @Published var peekTodayMetric: PeekTodayMetric { didSet { defaults.set(peekTodayMetric.rawValue, forKey: Keys.peekTodayMetric) } }
     @Published var peekClearGlass: Bool { didSet { defaults.set(peekClearGlass, forKey: Keys.peekClearGlass) } }
-    @Published var peekSize: PeekSize { didSet { defaults.set(peekSize.rawValue, forKey: Keys.peekSize) } }
+    /// Picking a size snaps the width to that size's preset; dragging the width picks the size that fits it.
+    @Published var peekSize: PeekSize {
+        didSet {
+            defaults.set(peekSize.rawValue, forKey: Keys.peekSize)
+            if PeekSize(width: peekWidth) != peekSize { peekWidth = Double(peekSize.width) }
+        }
+    }
+    /// Peek's width in points, set by dragging its edges. Its layout (Small, Medium, Large) follows from it.
+    @Published var peekWidth: Double {
+        didSet {
+            defaults.set(peekWidth, forKey: Keys.peekWidth)
+            let fitting = PeekSize(width: peekWidth)
+            if fitting != peekSize { peekSize = fitting }
+        }
+    }
     /// Providers whose 5-hour window Small Peek shows, in this order. Empty means every provider that has one.
     @Published var peekSmallProviders: [AgentKind] { didSet { save(peekSmallProviders.map(\.rawValue), Keys.peekSmallProviders) } }
     @Published var peekVisible: Bool { didSet { defaults.set(peekVisible, forKey: Keys.peekVisible) } }
@@ -308,6 +344,7 @@ final class Preferences: ObservableObject {
 
     private enum Keys {
         static let menuBarItems = "LocalObserver.menuBarItems"
+        static let agentsFirst = "LocalObserver.menuBarAgentsFirst"
         static let menuSections = "LocalObserver.menuSections"
         static let hiddenSections = "LocalObserver.hiddenSections"
         static let showDockIcon = "LocalObserver.showDockIcon"
@@ -322,6 +359,7 @@ final class Preferences: ObservableObject {
         static let peekClearGlass = "LocalObserver.peekClearGlass"
         static let peekTodayMetric = "LocalObserver.peekTodayMetric"
         static let peekSize = "LocalObserver.peekSize"
+        static let peekWidth = "LocalObserver.peekWidth"
         static let peekSmallProviders = "LocalObserver.peekSmallProviders"
         static let collapsedMenuGroups = "LocalObserver.collapsedMenuGroups"
         static let collapsedPeekGroups = "LocalObserver.collapsedPeekGroups"
@@ -351,8 +389,15 @@ final class Preferences: ObservableObject {
     }
 
     private init() {
-        let items = (defaults.stringArray(forKey: Keys.menuBarItems) ?? ["servers", "agents", "attention"])
-        menuBarItems = items.compactMap(MenuBarItem.init(rawValue:))
+        let items = (defaults.stringArray(forKey: Keys.menuBarItems) ?? ["agents", "attention", "servers"])
+        var parsed = items.compactMap(MenuBarItem.init(rawValue:))
+        // Agents now come before servers everywhere; reorder titles saved under the old servers-first order once.
+        if !defaults.bool(forKey: Keys.agentsFirst) {
+            parsed = MenuBarItem.allCases.filter(parsed.contains)
+            defaults.set(true, forKey: Keys.agentsFirst)
+            defaults.set(parsed.map(\.rawValue), forKey: Keys.menuBarItems)
+        }
+        menuBarItems = parsed
         var sections = (defaults.stringArray(forKey: Keys.menuSections) ?? []).compactMap(MenuSection.init(rawValue:))
         // Sections added in later versions slot in after the one before them in the default order.
         for (index, section) in MenuSection.allCases.enumerated() where !sections.contains(section) {
@@ -373,7 +418,10 @@ final class Preferences: ObservableObject {
         peekVisible = defaults.bool(forKey: Keys.peekVisible)
         peekClearGlass = defaults.object(forKey: Keys.peekClearGlass) as? Bool ?? true
         peekTodayMetric = PeekTodayMetric(rawValue: defaults.string(forKey: Keys.peekTodayMetric) ?? "") ?? .cost
-        peekSize = PeekSize(rawValue: defaults.string(forKey: Keys.peekSize) ?? "") ?? .large
+        let savedSize = PeekSize(rawValue: defaults.string(forKey: Keys.peekSize) ?? "") ?? .large
+        let savedWidth = defaults.object(forKey: Keys.peekWidth) as? Double
+        peekWidth = savedWidth.map { min(max($0, PeekSize.widthRange.lowerBound), PeekSize.widthRange.upperBound) } ?? Double(savedSize.width)
+        peekSize = savedWidth.map(PeekSize.init(width:)) ?? savedSize
         peekSmallProviders = (defaults.stringArray(forKey: Keys.peekSmallProviders) ?? []).compactMap(AgentKind.init(rawValue:))
         collapsedMenuGroups = Set(defaults.stringArray(forKey: Keys.collapsedMenuGroups) ?? [])
         collapsedPeekGroups = Set(defaults.stringArray(forKey: Keys.collapsedPeekGroups) ?? [])

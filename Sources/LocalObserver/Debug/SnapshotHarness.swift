@@ -5,6 +5,8 @@ import WidgetKit
 import LocalObserverCore
 import LocalObserverWidgetUI
 import LocalObserverShelf
+import LocalObserverRepos
+import LocalObserverDisk
 
 /// Debug-only: `LOCAL_OBSERVER_SNAPSHOT_DIR=/tmp/shots .build/debug/LocalObserver` renders each agent page
 /// offscreen in light and dark mode, writes PNGs, and quits. Nothing is shown on screen or activated.
@@ -92,6 +94,9 @@ enum SnapshotHarness {
         if demo {
             SnapshotDemo.loadAgents(into: store)
             SnapshotDemo.loadAudio()
+            SnapshotDemo.loadRepos(into: RepoStore.shared)
+            SnapshotDemo.loadGitHub(into: GitHubStore.shared)
+            SnapshotDemo.loadDisk(into: DiskStore.shared)
         } else {
             AppAudio.shared.refresh()
         }
@@ -115,6 +120,20 @@ enum SnapshotHarness {
                 ("inspector", AnyView(inspector(store)), CGSize(width: 360, height: 900)),
                 ("settings", AnyView(AgentSettingsView(store: store)), CGSize(width: 620, height: 560)),
                 ("menubar", AnyView(MenuBarView(state: makeState(), agentStore: store)), CGSize(width: 360, height: 1300)),
+                ("servers", AnyView(ServersPage(state: makeState())), CGSize(width: width, height: 700)),
+                ("repos", AnyView(reposPage()), CGSize(width: width, height: 900)),
+                ("repo-inspector", AnyView(repoInspector()), CGSize(width: 360, height: 1000)),
+                ("pulls", AnyView(PullRequestsPage(store: RepoStore.shared)), CGSize(width: width, height: 800)),
+                ("settings-repos", AnyView(RepoSettingsPane()), CGSize(width: 620, height: 900)),
+                ("cleanup", AnyView(CleanupPage(store: DiskStore.shared)), CGSize(width: width, height: 1500)),
+                ("settings-disk", AnyView(DiskSettingsPane()), CGSize(width: 620, height: 560)),
+                ("gh-repos", AnyView(GitHubPage(store: GitHubStore.shared, repos: RepoStore.shared, agents: store)), CGSize(width: width, height: 1100)),
+                ("gh-code", AnyView(GHRepoView(store: GitHubStore.shared, repos: RepoStore.shared, slug: "acme/aurora-api", tab: .code)), CGSize(width: width, height: 1100)),
+                ("gh-branches", AnyView(GHRepoView(store: GitHubStore.shared, repos: RepoStore.shared, slug: "acme/aurora-api", tab: .branches)), CGSize(width: width, height: 900)),
+                ("gh-pulls", AnyView(GHRepoView(store: GitHubStore.shared, repos: RepoStore.shared, slug: "acme/aurora-api", tab: .pulls)), CGSize(width: width, height: 700)),
+                ("gh-commits", AnyView(GHRepoView(store: GitHubStore.shared, repos: RepoStore.shared, slug: "acme/aurora-api", tab: .commits)), CGSize(width: width, height: 900)),
+                ("gh-pull", AnyView(GHPullView(store: GitHubStore.shared, repos: RepoStore.shared, agents: store, slug: "acme/aurora-api", number: 214)), CGSize(width: width, height: 1700)),
+                ("gh-files", AnyView(GHPullView(store: GitHubStore.shared, repos: RepoStore.shared, agents: store, slug: "acme/aurora-api", number: 214, initialTab: .files)), CGSize(width: width, height: 1000)),
             ]
             // Notch states, each as its own controller so modes don't bleed between renders.
             let sample = store.runningSessions.first
@@ -131,6 +150,10 @@ enum SnapshotHarness {
                 ("notch-usage", .expanded, nil),
                 ("notch-limits", .expanded, nil),
                 ("notch-servers", .expanded, nil),
+                ("notch-repos", .expanded, nil),
+                ("notch-alert-checks", .alert, NotchAlert(id: "c", kind: .checksFailed, agent: nil, title: "Fix flaky auth test",
+                                                          detail: "Checks failed on pixel-garden #88", badge: "Checks failed",
+                                                          sessionID: nil, symbol: "xmark.circle.fill")),
                 ("notch-media", .expanded, nil),
                 ("notch-sound", .expanded, nil),
                 ("notch-hud", .hud(.volume), nil),
@@ -143,7 +166,7 @@ enum SnapshotHarness {
             ]
             let providerSets: [String: [AgentKind]] = ["notch-limits-p1": [.claude], "notch-limits-p3": [.claude, .codex, .antigravity],
                                                        "notch-limits-p4": [.claude, .codex, .antigravity, .copilot]]
-            let tabs: [String: NotchTab] = ["notch-usage": .usage, "notch-limits": .limits, "notch-servers": .servers,
+            let tabs: [String: NotchTab] = ["notch-usage": .usage, "notch-limits": .limits, "notch-servers": .servers, "notch-repos": .repos,
                                             "notch-media": .media, "notch-sound": .sound,
                                             "notch-limits-p1": .limits, "notch-limits-p3": .limits, "notch-limits-p4": .limits, "notch-limits-multi": .limits]
             for (name, mode, alert) in notchStates where wanted(name) {
@@ -214,6 +237,7 @@ enum SnapshotHarness {
             // Agent Peek at each size. The canvas is the widest panel plus its shadow margin; the view sits top-leading.
             let peekState = makeState()
             let savedSize = Preferences.shared.peekSize
+            let savedWidth = Preferences.shared.peekWidth
             LiquidGlass.forceFallback = true
             let prefs = Preferences.shared
             let saved = (prefs.peekShowsAgents, prefs.peekShowsLimits, prefs.peekLimitStyle, prefs.peekSetupDone)
@@ -237,8 +261,20 @@ enum SnapshotHarness {
                     }
                 }
             }
+            // Dragged widths between and beyond the presets.
+            for width in [236.0, 300, 420] where wanted("peek-width-\(Int(width))") {
+                prefs.peekWidth = width
+                prefs.peekSetupDone = true
+                prefs.peekShowsAgents = true
+                prefs.peekLimitStyle = .pie
+                let view = AnyView(AgentPeekView(agentStore: store, state: peekState) { _ in }
+                    .frame(width: 476, height: 620, alignment: .topLeading))
+                await render(view, size: CGSize(width: 476, height: 620), dark: true,
+                             to: directory.appendingPathComponent("peek-width-\(Int(width))-dark.png"))
+            }
             (prefs.peekShowsAgents, prefs.peekShowsLimits, prefs.peekLimitStyle, prefs.peekSetupDone) = saved
             Preferences.shared.peekSize = savedSize
+            Preferences.shared.peekWidth = savedWidth
             LiquidGlass.forceFallback = false
             print("Snapshots written to \(directory.path)")
             exit(0)
@@ -363,6 +399,16 @@ enum SnapshotHarness {
             return true
         }
         return ImageThumbnail.png(NSImage(data: image.tiffRepresentation ?? Data()) ?? image) ?? Data()
+    }
+
+    private static func reposPage() -> some View {
+        let repos = RepoStore.shared
+        repos.selection = nil
+        return ReposPage(store: repos)
+    }
+
+    @ViewBuilder private static func repoInspector() -> some View {
+        if let repo = RepoStore.shared.repos.first { RepoInspectorView(store: RepoStore.shared, repo: repo) }
     }
 
     @ViewBuilder private static func inspector(_ store: AgentStore) -> some View {

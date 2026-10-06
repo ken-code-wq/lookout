@@ -3,6 +3,7 @@ import SwiftUI
 import Combine
 import LocalObserverCore
 import LocalObserverWidgetUI
+import LocalObserverRepos
 
 /// Everything that lives outside the main window: Dock badge, live Dock icon, Dock menu, and the floating Peek panel.
 @MainActor
@@ -19,6 +20,8 @@ final class LiveSurfaces: NSObject, NSWindowDelegate {
     /// Edges the panel keeps while its content grows or shrinks: always the top (AppKit would otherwise pin the
     /// bottom), and whichever side is nearer its screen's edge, so a Peek parked top-right stays there as it narrows.
     private var panelAnchor: (top: CGFloat, left: CGFloat, right: CGFloat)?
+    /// While a side edge of Peek is dragged, the opposite edge stays put.
+    private var resizePin: HorizontalEdge?
     private let prefs = Preferences.shared
     /// A widget link that arrived before the menu bar label attached the stores (cold launch from a widget).
     private var pendingURLs: [URL] = []
@@ -73,6 +76,19 @@ final class LiveSurfaces: NSObject, NSWindowDelegate {
             .sink { GlobalHotKeys.shared.register(.shelf, $0) }
             .store(in: &cancellables)
 
+        // Repo actions (fetch, pull, cleanup) report back as toasts in the main window.
+        RepoStore.shared.onActionResult = { [weak state] message, ok in
+            state?.show(Toast(message: message, symbol: ok ? "checkmark.circle" : "exclamationmark.triangle", tone: ok ? .success : .danger))
+        }
+        DiskCoordinator.shared.attach(state: state, agentStore: agentStore)
+        GitHubStore.shared.onActionResult = { [weak state] message, ok in
+            state?.show(Toast(message: message, symbol: ok ? "checkmark.circle" : "exclamationmark.triangle", tone: ok ? .success : .danger))
+        }
+        RepoStore.shared.objectWillChange
+            .throttle(for: .seconds(5), scheduler: RunLoop.main, latest: true)
+            .sink { [weak self] in self?.update() }
+            .store(in: &cancellables)
+
         if prefs.peekVisible { showPeek() }
         NotchController.shared.attach(state: state, agentStore: agentStore)
         AppAudio.shared.start()
@@ -94,6 +110,10 @@ final class LiveSurfaces: NSObject, NSWindowDelegate {
         case "usage": openMain(.agentUsage)
         case "limits": openMain(.agentLimits)
         case "servers": openMain(.all)
+        case "repos": openMain(.repos)
+        case "pulls": openMain(.pullRequests)
+        case "github": openMain(.github)
+        case "cleanup": openMain(.cleanup)
         // The shelf lives in the notch; without one, the menu bar panel has it.
         case "shelf": if !NotchController.shared.openShelf(.shelf) { toggleMenuBarPanel() }
         case "session":
@@ -134,6 +154,9 @@ final class LiveSurfaces: NSObject, NSWindowDelegate {
         case .agents: badge = agents > 0 ? "\(agents)" : nil
         case .servers: badge = state.visibleServers.isEmpty ? nil : "\(state.visibleServers.count)"
         case .limit: badge = limit.map { "\(Int($0.rounded()))%" }
+        case .pullRequests:
+            let count = RepoStore.shared.pullsNeedingYou.count
+            badge = count > 0 ? "\(count)" : nil
         }
         let peek = prefs.dockIconStyle == .peek
         // Store changes fire this constantly; only touch the Dock tile when its content actually moved.
@@ -290,6 +313,16 @@ final class LiveSurfaces: NSObject, NSWindowDelegate {
             : [.fullScreenAuxiliary]
     }
 
+    func beginPeekResize(pinning edge: HorizontalEdge) {
+        recordAnchor()
+        resizePin = edge
+    }
+
+    func endPeekResize() {
+        resizePin = nil
+        recordAnchor()
+    }
+
     private func recordAnchor() {
         guard let frame = panel?.frame else { return }
         panelAnchor = (frame.maxY, frame.minX, frame.maxX)
@@ -306,7 +339,8 @@ final class LiveSurfaces: NSObject, NSWindowDelegate {
             panel.invalidateShadow()
             guard let anchor = self.panelAnchor, !panel.inLiveResize else { return }
             let screen = (panel.screen ?? NSScreen.main)?.visibleFrame
-            let pinRight = screen.map { (anchor.left + anchor.right) / 2 > $0.midX } ?? false
+            let pinRight = self.resizePin.map { $0 == .trailing }
+                ?? screen.map { (anchor.left + anchor.right) / 2 > $0.midX } ?? false
             let x = pinRight ? anchor.right - panel.frame.width : anchor.left
             guard abs(panel.frame.maxY - anchor.top) > 0.5 || abs(panel.frame.minX - x) > 0.5 else { return }
             panel.setFrameTopLeftPoint(NSPoint(x: x, y: anchor.top))

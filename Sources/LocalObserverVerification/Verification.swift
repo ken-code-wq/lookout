@@ -124,6 +124,8 @@ struct LocalObserverVerification {
         precondition(yesterdayOnly.currentStreak == 2, "A streak survives until today ends")
         LimitChecks.run()
         ShelfChecks.run()
+        RepoChecks.run()
+        DiskChecks.run()
 
         for agent in AgentKind.allCases {
             precondition(AgentIconStore.image(for: agent) != nil, "Missing official icon for \(agent.name)")

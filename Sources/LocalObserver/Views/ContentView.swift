@@ -2,10 +2,15 @@ import SwiftUI
 import UniformTypeIdentifiers
 import LocalObserverCore
 import LocalObserverShelf
+import LocalObserverRepos
+import LocalObserverDisk
 
 struct ContentView: View {
     @ObservedObject var state: AppState
     @ObservedObject var agentStore: AgentStore
+    @ObservedObject var repoStore: RepoStore = .shared
+    @ObservedObject var gitHubStore: GitHubStore = .shared
+    @ObservedObject var diskStore: DiskStore = .shared
     @State private var dropTargeted = false
     @State private var columns: NavigationSplitViewVisibility = .all
     @State private var windowWidth: CGFloat = 1200
@@ -13,15 +18,32 @@ struct ContentView: View {
     @AppStorage("LocalObserver.inspectorWidth") private var inspectorWidth: Double = 340
 
     private var searchBinding: Binding<String> {
-        isAgentHub ? $agentStore.searchText : $state.searchText
+        if state.sidebar == .cleanup { return $diskStore.searchText }
+        if state.sidebar == .github { return $gitHubStore.query }
+        if isRepos { return $repoStore.searchText }
+        return isAgentHub ? $agentStore.searchText : $state.searchText
     }
 
     private var isAgentHub: Bool { state.sidebar.isAgentPage }
-    private var inspectingServer: ServerEntry? {
-        state.sidebar == .launchers || state.sidebar == .home || isAgentHub ? nil : state.selected
-    }
+    private var isRepos: Bool { state.sidebar.isRepoPage }
+    private var inspectingServer: ServerEntry? { state.sidebar.isServerPage ? state.selected : nil }
     private var inspectingAgent: AgentSession? { state.sidebar == .agentActivity ? agentStore.selectedSession : nil }
-    private var isInspecting: Bool { inspectingServer != nil || inspectingAgent != nil }
+    private var inspectingRepo: Repo? { state.sidebar == .repos ? repoStore.selected : nil }
+    private var isInspecting: Bool { inspectingServer != nil || inspectingAgent != nil || inspectingRepo != nil }
+
+    private var searchPrompt: String {
+        if state.sidebar == .cleanup { return "Search project, folder, cache" }
+        if state.sidebar == .github {
+            switch gitHubStore.route {
+            case nil: return "Find a repository…"
+            case .repo(_, .branches): return "Search branches"
+            case .repo(_, .commits): return "Search commits"
+            default: return "Search pull requests"
+            }
+        }
+        if isRepos { return state.sidebar == .pullRequests ? "Search title, repository, branch" : "Search repository, branch, path" }
+        return isAgentHub ? "Search agent, project, model" : "Search port, project, folder, branch"
+    }
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columns) {
@@ -35,6 +57,11 @@ struct ContentView: View {
                         AgentInspectorView(store: agentStore, session: session)
                     }
                     .transition(.move(edge: .trailing).combined(with: .opacity))
+                } else if let repo = inspectingRepo {
+                    InspectorPanel(width: $inspectorWidth) {
+                        RepoInspectorView(store: repoStore, repo: repo)
+                    }
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
                 } else if let server = inspectingServer {
                     InspectorPanel(width: $inspectorWidth) {
                         InspectorView(state: state, server: server)
@@ -44,7 +71,7 @@ struct ContentView: View {
             }
             .animation(.snappy(duration: 0.28), value: isInspecting)
         }
-        .searchable(text: searchBinding, placement: .toolbar, prompt: isAgentHub ? "Search agent, project, model" : "Search port, project, folder…")
+        .searchable(text: searchBinding, placement: .toolbar, prompt: searchPrompt)
         .toolbar { toolbar }
         .navigationTitle(state.sidebar.title)
         .sheet(item: $state.draft) { draft in
@@ -76,13 +103,21 @@ struct ContentView: View {
                 AgentUsagePage(store: agentStore)
             } else if state.sidebar == .agentLimits {
                 AgentLimitsPage(store: agentStore)
+            } else if state.sidebar == .repos {
+                ReposPage(store: repoStore)
+            } else if state.sidebar == .cleanup {
+                CleanupPage(store: diskStore)
+            } else if state.sidebar == .github {
+                GitHubPage(store: gitHubStore, repos: repoStore, agents: agentStore)
+            } else if state.sidebar == .pullRequests {
+                PullRequestsPage(store: repoStore)
             } else {
                 ServersPage(state: state)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(N.bg)
-        .overlay { if !isAgentHub && dropTargeted { DropOverlay() } }
+        .overlay { if state.sidebar.isServerPage || state.sidebar == .launchers, dropTargeted { DropOverlay() } }
         .overlay(alignment: .bottom) {
             if let toast = state.toast {
                 ToastView(toast: toast,
@@ -94,7 +129,7 @@ struct ContentView: View {
             }
         }
         .dropDestination(for: URL.self) { urls, _ in
-            guard !isAgentHub else { return false }
+            guard state.sidebar.isServerPage || state.sidebar == .launchers || state.sidebar == .home else { return false }
             guard let folder = urls.first(where: \.hasDirectoryPath) ?? urls.first.map({ $0.deletingLastPathComponent() }) else { return false }
             state.draftLauncher(folder: folder.path)
             return true
@@ -107,9 +142,21 @@ struct ContentView: View {
     private var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
             Button {
-                isAgentHub ? agentStore.refresh(forceLimits: state.sidebar == .agentLimits) : state.refresh()
+                if state.sidebar == .cleanup {
+                    DiskCoordinator.shared.scan()
+                } else if state.sidebar == .github {
+                    gitHubStore.refreshCurrent()
+                    repoStore.refreshGitHub()
+                } else if isRepos {
+                    repoStore.refresh()
+                    repoStore.refreshGitHub()
+                } else if isAgentHub {
+                    agentStore.refresh(forceLimits: state.sidebar == .agentLimits)
+                } else {
+                    state.refresh()
+                }
             } label: {
-                if isAgentHub ? agentStore.isScanning : state.isScanning {
+                if state.sidebar == .cleanup ? diskStore.isScanning : state.sidebar == .github ? gitHubStore.isLoadingCurrent : isRepos ? (repoStore.isScanning || repoStore.isFetchingGitHub) : (isAgentHub ? agentStore.isScanning : state.isScanning) {
                     ProgressView().controlSize(.small).frame(width: 16, height: 16)
                 } else {
                     Label("Refresh", systemImage: "arrow.clockwise")
@@ -117,11 +164,11 @@ struct ContentView: View {
             }
             .help("Refresh now (⌘R)")
 
-            if isAgentHub {
+            if isAgentHub || isRepos {
                 SettingsLink {
-                    Label("Agent settings", systemImage: "gearshape")
+                    Label(isRepos ? "Repos settings" : "Agent settings", systemImage: "gearshape")
                 }
-                .help("Choose which agents to watch (⌘,)")
+                .help(isRepos ? "Choose the folders searched for repositories (⌘,)" : "Choose which agents to watch (⌘,)")
             } else {
                 Button {
                     state.draft = LauncherDraft()
@@ -158,19 +205,32 @@ private struct DropOverlay: View {
 struct SidebarView: View {
     @ObservedObject var state: AppState
     @ObservedObject var agentStore: AgentStore
+    @ObservedObject var repoStore: RepoStore = .shared
+    @ObservedObject var gitHubStore: GitHubStore = .shared
 
     var body: some View {
+        // Agents lead; servers follow the code they serve.
         List(selection: sidebarBinding) {
             Section {
                 row(.home)
-                row(.all)
-                row(.favorites)
-                row(.launchers)
             }
             Section("Agents") {
                 row(.agentActivity)
                 row(.agentUsage)
                 row(.agentLimits)
+            }
+            Section("Repos") {
+                row(.repos)
+                row(.github)
+                row(.pullRequests)
+            }
+            Section("Servers") {
+                row(.all)
+                row(.favorites)
+                row(.launchers)
+            }
+            Section("Disk") {
+                row(.cleanup)
             }
             Section("Stack") {
                 ForEach(TypeGroup.allCases) { row(.group($0)) }
@@ -200,13 +260,18 @@ struct SidebarView: View {
                 Spacer()
                 let n = count(for: item)
                 let urgent = attention(for: item)
-                if urgent > 0 {
+                if item == .cleanup, let volume = DiskStore.shared.volume {
+                    // Free space instead of a count; red once it's below the warning threshold.
+                    Text("\(DiskFormat.bytes(volume.available)) free")
+                        .font(.system(size: 11.5)).monospacedDigit()
+                        .foregroundStyle(DiskStore.shared.isLowOnSpace ? TagColor.red.fg : .secondary)
+                } else if urgent > 0 {
                     Text("\(urgent)")
                         .font(.system(size: 11, weight: .semibold)).monospacedDigit()
                         .foregroundStyle(TagColor.orange.fg)
                         .padding(.horizontal, 5).frame(height: 16)
                         .background(TagColor.orange.bg, in: Capsule())
-                        .help("\(urgent) need\(urgent == 1 ? "s" : "") you")
+                        .help(item.isRepoPage ? "\(urgent) need\(urgent == 1 ? "s" : "") a look" : "\(urgent) need\(urgent == 1 ? "s" : "") you")
                 } else if n > 0 {
                     Text("\(n)").font(.system(size: 11.5)).foregroundStyle(.secondary).monospacedDigit()
                         .contentTransition(.numericText())
@@ -219,17 +284,35 @@ struct SidebarView: View {
     }
 
     private func count(for item: SidebarItem) -> Int {
-        item == .agentActivity ? agentStore.runningSessions.count : state.count(for: item)
+        switch item {
+        case .agentActivity: return agentStore.runningSessions.count
+        case .repos: return repoStore.visibleRepos.count
+        case .github: return gitHubStore.repositories.count
+        case .pullRequests: return repoStore.pulls.count
+        default: return state.count(for: item)
+        }
     }
 
-    /// Orange count of sessions waiting on the user; shown instead of the running count when non-zero.
+    /// Orange count of things waiting on the user; shown instead of the plain count when non-zero.
     private func attention(for item: SidebarItem) -> Int {
-        item == .agentActivity ? agentStore.attentionSessions.count : 0
+        switch item {
+        case .agentActivity: return agentStore.attentionSessions.count
+        case .pullRequests: return repoStore.pullsNeedingYou.count
+        default: return 0
+        }
     }
 
     private var footer: some View {
         Group {
-            if state.sidebar.isAgentPage {
+            if state.sidebar.isRepoPage {
+                HStack(spacing: 8) {
+                    Circle().fill(repoStore.gitHub.login != nil ? N.green : N.text3).frame(width: 7, height: 7)
+                    RelativeTimeText(date: state.sidebar == .pullRequests ? repoStore.lastGitHub : repoStore.lastScan)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+            } else if state.sidebar.isAgentPage {
                 HStack(spacing: 8) {
                     Circle()
                         .fill(agentStore.settings.autoRefresh ? N.green : N.text3)

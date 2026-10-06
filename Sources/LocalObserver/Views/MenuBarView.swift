@@ -2,6 +2,8 @@ import SwiftUI
 import AppKit
 import LocalObserverCore
 import LocalObserverShelf
+import LocalObserverRepos
+import LocalObserverDisk
 
 /// Menu bar popover: glance at what's running, open or stop it, start a saved launcher.
 struct MenuBarView: View {
@@ -11,6 +13,8 @@ struct MenuBarView: View {
     @State private var contentHeight: CGFloat = 0
     @ObservedObject private var prefs = Preferences.shared
     @ObservedObject var shelf: ShelfStore = .shared
+    @ObservedObject var repoStore: RepoStore = .shared
+    @ObservedObject var diskStore: DiskStore = .shared
     @State private var shelfDropTargeted = false
 
     private var servers: [ServerEntry] {
@@ -58,23 +62,27 @@ struct MenuBarView: View {
             .frame(height: min(contentHeight, maxScrollHeight))
 
             Divider().padding(.horizontal, 10)
-            VStack(spacing: 1) {
-                MenuItem(title: "Open Lookout", symbol: "macwindow", shortcut: "o") { showWindow() }
-                MenuItem(title: "Agent activity", symbol: "waveform.path.ecg", shortcut: nil) {
+            // One compact row: the main action labelled, the rest as icons with tooltips.
+            HStack(spacing: 2) {
+                MenuFooterButton(title: "Open Lookout", symbol: "macwindow", help: "Open Lookout (⌘O)", shortcut: "o") { showWindow() }
+                Spacer(minLength: 4)
+                MenuFooterButton(symbol: "waveform.path.ecg", help: "Agent activity") {
                     showWindow()
                     state.sidebar = .agentActivity
                 }
-                MenuItem(title: prefs.peekVisible ? "Hide Agent Peek" : "Show Agent Peek", symbol: "eye", shortcut: nil,
-                         hint: prefs.peekHotKey?.display) {
+                MenuFooterButton(symbol: prefs.peekVisible ? "eye.slash" : "eye",
+                                 help: (prefs.peekVisible ? "Hide Agent Peek" : "Show Agent Peek") + (prefs.peekHotKey.map { " (\($0.display))" } ?? "")) {
                     LiveSurfaces.shared.togglePeek()
                 }
-                MenuItem(title: "New server…", symbol: "plus", shortcut: nil) {
+                MenuFooterButton(symbol: "plus", help: "New server…") {
                     showWindow()
                     state.draft = LauncherDraft()
                 }
-                MenuItem(title: "Quit", symbol: "power", shortcut: "q") { NSApp.terminate(nil) }
+                Rectangle().fill(Color.primary.opacity(0.1)).frame(width: 1, height: 16).padding(.horizontal, 3)
+                MenuFooterButton(symbol: "power", help: "Quit Lookout (⌘Q)", shortcut: "q") { NSApp.terminate(nil) }
             }
-            .padding(6)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
         }
         .frame(width: 360)
         // Dropping anything on the panel puts it on the Shelf.
@@ -113,10 +121,13 @@ struct MenuBarView: View {
             case .sound: return true
             case .agents: return !agents.isEmpty
             case .limits: return !limitWindows.isEmpty
+            case .repos: return !repoStore.pulls.isEmpty || !repoStore.attentionRepos.isEmpty
+                || !MenuReposContent.activeWorktrees(in: repoStore).isEmpty
             case .servers: return true
             case .launchers: return !idleLaunchers.isEmpty
             // Always shown, like Servers: its empty state says what the section is for.
             case .shelf: return true
+            case .disk: return diskStore.volume != nil
             }
         }
     }
@@ -157,7 +168,7 @@ struct MenuBarView: View {
             if !prefs.isCollapsed(menu: "agents") {
                 VStack(spacing: 1) {
                     ForEach(agents) { agent in
-                        MenuAgentRow(agent: agent) {
+                        MenuAgentRow(agent: agent, pull: AgentLinks.pull(for: agent, in: repoStore)) {
                             if !AgentActions.jump(to: agent) {
                                 showWindow()
                                 state.sidebar = .agentActivity
@@ -184,6 +195,16 @@ struct MenuBarView: View {
                     state.sidebar = .agentLimits
                 }
             }
+        case .repos:
+            SectionLabel("Repos", key: "repos", summary: reposSummary)
+            if !prefs.isCollapsed(menu: "repos") {
+                MenuReposContent(store: repoStore) { page in
+                    showWindow()
+                    state.sidebar = page
+                }
+                .padding(.horizontal, 6)
+                .padding(.bottom, 6)
+            }
         case .servers:
             if servers.isEmpty {
                 VStack(spacing: 6) {
@@ -209,6 +230,38 @@ struct MenuBarView: View {
             }
         case .shelf:
             shelfSection
+        case .disk:
+            if let volume = diskStore.volume {
+                SectionLabel("Disk", key: "disk", summary: "\(DiskFormat.bytes(volume.available)) free")
+                if !prefs.isCollapsed(menu: "disk") {
+                    Button {
+                        showWindow()
+                        state.sidebar = .cleanup
+                    } label: {
+                        VStack(alignment: .leading, spacing: 6) {
+                            DiskUsageCard(store: diskStore, compact: true)
+                            HStack(spacing: 6) {
+                                Text("\(DiskFormat.bytes(volume.available)) free of \(DiskFormat.bytes(volume.total))")
+                                    .foregroundStyle(diskStore.isLowOnSpace ? TagColor.red.fg : .secondary)
+                                Spacer()
+                                if diskStore.safeBytes > 0 {
+                                    Text("\(DiskFormat.bytes(diskStore.safeBytes)) safe to clear").foregroundStyle(TagColor.green.fg)
+                                } else {
+                                    Text("Cleanup").foregroundStyle(.secondary)
+                                }
+                                Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(.tertiary)
+                            }
+                            .font(.system(size: 11.5)).monospacedDigit()
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.top, 4)
+                        .padding(.bottom, 12)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open Cleanup")
+                }
+            }
         }
     }
 
@@ -232,6 +285,12 @@ struct MenuBarView: View {
                 .padding(.bottom, 6)
             }
         }
+    }
+
+    private var reposSummary: String {
+        let needs = repoStore.pullsNeedingYou.count
+        if needs > 0 { return "\(needs) need\(needs == 1 ? "s" : "") you" }
+        return "\(repoStore.myPulls.count) open"
     }
 
     private var soundSummary: String {
@@ -286,9 +345,10 @@ struct MenuBarView: View {
     }
 
     private var headerSummary: String {
-        var parts = ["\(servers.count) server\(servers.count == 1 ? "" : "s")", "\(agents.count) agent\(agents.count == 1 ? "" : "s")"]
+        var parts = ["\(agents.count) agent\(agents.count == 1 ? "" : "s")"]
         let urgent = agentStore.attentionSessions.count
         if urgent > 0 { parts.append("\(urgent) need\(urgent == 1 ? "s" : "") you") }
+        parts.append("\(servers.count) server\(servers.count == 1 ? "" : "s")")
         return parts.joined(separator: ", ")
     }
 
@@ -348,8 +408,12 @@ private struct MenuServerRow: View {
             FaviconView(server: server, size: 18)
             VStack(alignment: .leading, spacing: 0) {
                 Text(server.projectName).font(.system(size: 13)).lineLimit(1)
-                Text(server.isResponding ? "\(server.latencyMs)ms · \(server.uptimeText)" : "TCP · \(server.processName)")
-                    .font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1).monospacedDigit()
+                HStack(spacing: 4) {
+                    if let git = server.git { MenuBranch(git: git) }
+                    Text(server.isResponding ? "\(server.latencyMs)ms · \(server.uptimeText)" : "TCP · \(server.processName)")
+                        .lineLimit(1).monospacedDigit()
+                }
+                .font(.system(size: 10.5)).foregroundStyle(.secondary)
             }
             Spacer(minLength: 6)
             if hover {
@@ -386,6 +450,7 @@ private struct MenuServerRow: View {
 
 private struct MenuAgentRow: View {
     var agent: AgentSession
+    var pull: PullRequest? = nil
     var action: () -> Void
     @State private var hover = false
 
@@ -397,10 +462,23 @@ private struct MenuAgentRow: View {
                     Text(agent.title)
                         .font(.system(size: 13))
                         .lineLimit(1)
-                    Text(agent.projectName + (agent.process?.host.map { ", \($0.name)" } ?? ""))
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    // The branch leads and keeps its width: in a worktree it's what tells two sessions apart.
+                    // The host app is already the icon on the right, so it isn't repeated here.
+                    HStack(spacing: 4) {
+                        if let git = agent.checkout { MenuBranch(git: git).layoutPriority(1) }
+                        if let pull {
+                            HStack(spacing: 2) {
+                                CheckGlyph(state: pull.checks, size: 8.5)
+                                Text(verbatim: "#\(pull.number)")
+                            }
+                            .layoutPriority(1)
+                            .help("\(pull.title): \(pull.checks.title)")
+                            Text("·")
+                        }
+                        Text(agent.projectName).lineLimit(1)
+                    }
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 6)
                 HostAppIcon(session: agent, size: 16)
@@ -465,31 +543,28 @@ private struct MenuLauncherRow: View {
     }
 }
 
-private struct MenuItem: View {
-    var title: String
+/// Footer control: icon-only with a tooltip, or icon and title for the main action.
+private struct MenuFooterButton: View {
+    var title: String? = nil
     var symbol: String
-    var shortcut: Character?
-    var hint: String? = nil
+    var help: String
+    var shortcut: Character? = nil
     var action: () -> Void
-    @State private var hover = false
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 9) {
-                Image(systemName: symbol).font(.system(size: 12)).frame(width: 18).foregroundStyle(.secondary)
-                Text(title).font(.system(size: 13))
-                Spacer()
-                if let shortcut { Text("⌘" + String(shortcut).uppercased()).font(.system(size: 12)).foregroundStyle(.tertiary) }
-                else if let hint { Text(hint).font(.system(size: 12)).foregroundStyle(.tertiary) }
+            HStack(spacing: 6) {
+                Image(systemName: symbol).font(.system(size: 12.5))
+                if let title { Text(title).font(.system(size: 12.5, weight: .medium)) }
             }
-            .padding(.horizontal, 8)
-            .frame(height: 28)
-            .background(hover ? Color.primary.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .foregroundStyle(title == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+            .padding(.horizontal, title == nil ? 0 : 8)
+            .frame(minWidth: 28, minHeight: 28)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MenuHoverStyle())
         .modifier(CommandShortcut(key: shortcut))
-        .onHover { hover = $0 }
+        .help(help)
     }
 }
 
@@ -543,5 +618,210 @@ private struct MenuTodayCard: View {
             Text(value).font(.system(size: 14, weight: .semibold)).monospacedDigit().lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Branch in a menu bar row's second line: "⑂ feat/x ·", purple glyph for a worktree.
+struct MenuBranch: View {
+    var git: GitCheckout
+    var trailingDot = true
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: git.isLinkedWorktree ? "square.stack.3d.down.right" : "arrow.triangle.branch")
+                .font(.system(size: 8.5, weight: .semibold))
+                .foregroundStyle(git.isLinkedWorktree ? AnyShapeStyle(TagColor.purple.fg) : AnyShapeStyle(.secondary))
+            Text(git.refLabel).lineLimit(1).truncationMode(.middle)
+                .foregroundStyle(git.isLinkedWorktree ? AnyShapeStyle(TagColor.purple.fg) : AnyShapeStyle(.secondary))
+            if trailingDot { Text("·") }
+        }
+        .layoutPriority(-1)
+        .help(BranchTag.describe(git))
+    }
+}
+
+/// Menu bar Repos section: pull requests that need you or are running, then repositories holding unsaved work.
+private struct MenuReposContent: View {
+    @ObservedObject var store: RepoStore
+    var open: (SidebarItem) -> Void
+
+    var body: some View {
+        // Needs-you first, then running checks, then the rest of yours; five at most.
+        let pulls = Array((store.pullsNeedingYou + store.runningPulls + store.myPulls)
+            .reduce(into: [PullRequest]()) { list, pr in if !list.contains(where: { $0.url == pr.url }) { list.append(pr) } }
+            .prefix(5))
+        VStack(spacing: 1) {
+            ForEach(pulls) { MenuPullRow(pull: $0) }
+            ForEach(activeWorktrees, id: \.worktree.path) { MenuWorktreeRow(repo: $0.repo, worktree: $0.worktree) }
+            let unsaved = store.attentionRepos.filter(\.hasLocalOnlyWork)
+                .sorted { ($0.lastTouched ?? .distantPast) > ($1.lastTouched ?? .distantPast) }
+            ForEach(unsaved.prefix(3)) { MenuRepoRow(repo: $0) }
+            if unsaved.count > 3 {
+                let rest = unsaved.count - 3
+                Button { open(.repos) } label: {
+                    HStack(spacing: 9) {
+                        Image(systemName: "pencil.and.list.clipboard").font(.system(size: 12)).frame(width: 18).foregroundStyle(.secondary)
+                        Text("\(rest) more repositor\(rest == 1 ? "y has" : "ies have") unsaved work")
+                            .font(.system(size: 12.5)).lineLimit(1)
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(.tertiary)
+                    }
+                    .padding(.horizontal, 8)
+                    .frame(height: 30)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(MenuRowButtonStyle())
+                .help(unsaved.dropFirst(3).prefix(6).map { "\($0.name): \($0.changes.summary)" + ($0.hasUnpushed ? ", \($0.unpushedCount) unpushed" : "") }.joined(separator: "\n"))
+            }
+        }
+    }
+}
+
+extension MenuReposContent {
+    /// Worktrees holding unsaved work or touched in the last week, most recent first; five at most.
+    var activeWorktrees: [(repo: Repo, worktree: RepoWorktree)] {
+        MenuReposContent.activeWorktrees(in: store)
+    }
+
+    static func activeWorktrees(in store: RepoStore, now: Date = Date()) -> [(repo: Repo, worktree: RepoWorktree)] {
+        let recent = now.addingTimeInterval(-7 * 86_400)
+        return store.visibleRepos
+            .flatMap { repo in repo.worktrees.map { (repo: repo, worktree: $0) } }
+            .filter { !$0.worktree.isPrunable && ($0.worktree.isDirty || ($0.worktree.lastTouched ?? .distantPast) > recent) }
+            .sorted { ($0.worktree.lastTouched ?? .distantPast) > ($1.worktree.lastTouched ?? .distantPast) }
+            .prefix(5)
+            .map { $0 }
+    }
+}
+
+/// A repository holding unsaved work: its name, the branch checked out, and what's unsaved.
+private struct MenuRepoRow: View {
+    var repo: Repo
+    @State private var hover = false
+
+    var body: some View {
+        Button { RepoActions.openEditor(repo.root) } label: {
+            HStack(spacing: 9) {
+                Image(systemName: "arrow.triangle.branch").font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary).frame(width: 18)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(repo.name).font(.system(size: 13)).lineLimit(1)
+                    HStack(spacing: 4) {
+                        Text(repo.refLabel).font(.system(size: 10.5, design: .monospaced)).lineLimit(1).truncationMode(.middle)
+                        Text("· \(RepoFormat.ago(repo.lastTouched))").font(.system(size: 10.5))
+                    }
+                    .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 6)
+                if !repo.changes.isClean {
+                    Text("\(repo.changes.total)").font(.system(size: 10.5, weight: .medium)).monospacedDigit()
+                        .foregroundStyle(TagColor.orange.fg).help(repo.changes.summary)
+                }
+                if repo.hasUnpushed {
+                    Text("↑\(repo.unpushedCount)").font(.system(size: 10.5, weight: .medium)).monospacedDigit()
+                        .foregroundStyle(TagColor.blue.fg).help("\(repo.unpushedCount) unpushed")
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 38)
+            .background(hover ? Color.primary.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .contextMenu { if let slug = repo.github { Button("Show GitHub Page") { GitHubNav.open(repo: slug) } } }
+        .help("Open \(repo.displayPath) in your editor")
+    }
+}
+
+/// An active worktree: its branch in purple, the repository and the tool that made it.
+private struct MenuWorktreeRow: View {
+    var repo: Repo
+    var worktree: RepoWorktree
+    @State private var hover = false
+
+    var body: some View {
+        Button { RepoActions.openEditor(worktree.path) } label: {
+            HStack(spacing: 9) {
+                Image(systemName: "square.stack.3d.down.right").font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(TagColor.purple.fg).frame(width: 18)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(worktree.refLabel).font(.system(size: 12.5, design: .monospaced)).foregroundStyle(TagColor.purple.fg)
+                        .lineLimit(1).truncationMode(.middle)
+                    Text([repo.name, worktree.owner.map { "\($0) worktree" }, RepoFormat.ago(worktree.lastTouched)].compactMap { $0 }.joined(separator: " · "))
+                        .font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 6)
+                if let changes = worktree.changes, !changes.isClean {
+                    Text("\(changes.total)").font(.system(size: 10.5, weight: .medium)).monospacedDigit()
+                        .foregroundStyle(TagColor.orange.fg).help(changes.summary)
+                }
+                if worktree.ahead > 0 {
+                    Text("↑\(worktree.ahead)").font(.system(size: 10.5, weight: .medium)).monospacedDigit()
+                        .foregroundStyle(TagColor.blue.fg).help("\(worktree.ahead) unpushed")
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 38)
+            .background(hover ? Color.primary.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .help("Open \(worktree.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) in your editor")
+    }
+}
+
+private struct MenuPullRow: View {
+    var pull: PullRequest
+    @State private var hover = false
+
+    var body: some View {
+        Button { GitHubNav.open(pull: pull.repo, number: pull.number) } label: {
+            HStack(spacing: 9) {
+                CheckGlyph(state: pull.checks, size: 13).frame(width: 18)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(pull.title).font(.system(size: 13)).lineLimit(1)
+                    Text(subtitle).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 6)
+                if pull.role == .reviewRequested {
+                    Image(systemName: "eye.fill").font(.system(size: 10)).foregroundStyle(TagColor.blue.fg).help("Waiting on your review")
+                } else if pull.review == .approved {
+                    Image(systemName: "hand.thumbsup.fill").font(.system(size: 10)).foregroundStyle(TagColor.green.fg).help("Approved")
+                } else if pull.review == .changesRequested {
+                    Image(systemName: "text.bubble.fill").font(.system(size: 10)).foregroundStyle(TagColor.red.fg).help("Changes requested")
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 38)
+            .background(hover ? Color.primary.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .contextMenu {
+            Button("Open in Lookout") { GitHubNav.open(pull: pull.repo, number: pull.number) }
+            Button("Open on GitHub") { ProcessManager.openURL(pull.url) }
+            Button("Copy Branch Name") { RepoActions.copy(pull.branch) }
+        }
+        .help("Open #\(pull.number) in Lookout")
+    }
+
+    private var subtitle: String {
+        let who = pull.role == .reviewRequested ? " · by \(pull.author)" : ""
+        return "\(pull.repoName) #\(pull.number) · \(pull.checks.title)\(who)"
+    }
+}
+
+private struct MenuRowButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { RowBody(configuration: configuration) }
+    private struct RowBody: View {
+        var configuration: Configuration
+        @State private var hover = false
+        var body: some View {
+            configuration.label
+                .background(hover ? Color.primary.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .onHover { hover = $0 }
+        }
     }
 }
