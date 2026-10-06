@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import LocalObserverCore
 import LocalObserverShelf
+import LocalObserverRepos
 
 /// The window's front page: what needs you, the day at a glance, the year of agent activity, then one card per
 /// pillar with a way into it.
@@ -10,6 +11,7 @@ struct HomePage: View {
     @ObservedObject var agentStore: AgentStore
     @ObservedObject var shelf: ShelfStore
     @ObservedObject private var prefs = Preferences.shared
+    @ObservedObject var repos: RepoStore = .shared
     @State private var width: CGFloat = 1000
     @State private var heatmapMetric: AgentMetricKind = .tokens
 
@@ -55,6 +57,19 @@ struct HomePage: View {
                     HomeCard(title: "Servers", symbol: "server.rack", count: servers.count,
                              link: "All servers", action: { navigate(.all) }) {
                         serversCard(servers)
+                    }
+                }
+                .padding(.bottom, 16)
+
+                pair {
+                    HomeCard(title: "Pull requests", symbol: "arrow.triangle.pull", count: repos.pulls.count,
+                             link: "All pull requests", action: { navigate(.pullRequests) }) {
+                        pullsCard
+                    }
+                } and: {
+                    HomeCard(title: "Unsaved work", symbol: "pencil.and.list.clipboard", count: repos.attentionRepos.count,
+                             link: "Repositories", action: { navigate(.repos) }) {
+                        unsavedCard
                     }
                 }
                 .padding(.bottom, 16)
@@ -163,6 +178,46 @@ struct HomePage: View {
         }
     }
 
+    @ViewBuilder private var pullsCard: some View {
+        let pulls = Array((repos.pullsNeedingYou + repos.runningPulls + repos.myPulls)
+            .reduce(into: [PullRequest]()) { list, pr in if !list.contains(where: { $0.url == pr.url }) { list.append(pr) } }
+            .prefix(5))
+        if repos.gitHub.login == nil, pulls.isEmpty {
+            switch repos.gitHub {
+            case .missingCLI: HomeEmpty(symbol: "terminal", text: "Install the GitHub CLI to see pull requests and checks.")
+            case .signedOut: HomeEmpty(symbol: "person.crop.circle.badge.questionmark", text: "Run gh auth login to see your pull requests.")
+            case .off: HomeEmpty(symbol: "powersleep", text: "GitHub is off in Settings › Repos.")
+            case .error(let message): HomeEmpty(symbol: "exclamationmark.triangle", text: message)
+            default: HomeEmpty(symbol: "arrow.triangle.pull", text: "Asking GitHub…")
+            }
+        } else if pulls.isEmpty {
+            HomeEmpty(symbol: "checkmark.circle", text: "No open pull requests, and no one waiting on you.")
+        } else {
+            VStack(spacing: 1) {
+                ForEach(pulls) { HomePullRow(pull: $0) }
+            }
+        }
+    }
+
+    @ViewBuilder private var unsavedCard: some View {
+        let list = repos.attentionRepos.sorted { ($0.lastTouched ?? .distantPast) > ($1.lastTouched ?? .distantPast) }
+        if repos.lastScan == nil {
+            HomeEmpty(symbol: "square.stack.3d.up", text: "Looking for repositories…")
+        } else if list.isEmpty {
+            HomeEmpty(symbol: "checkmark.circle", text: "Everything is committed and pushed.")
+        } else {
+            VStack(spacing: 1) {
+                ForEach(list.prefix(5)) { repo in
+                    HomeRepoRow(repo: repo, forgotten: repo.isForgotten(days: repos.settings.forgottenDays)) {
+                        repos.selection = repo.root
+                        navigate(.repos)
+                    }
+                }
+                if list.count > 5 { moreLine(list.count - 5) { navigate(.repos) } }
+            }
+        }
+    }
+
     @ViewBuilder private func limitsCard(_ windows: [AgentQuotaWindow]) -> some View {
         if windows.isEmpty {
             HomeEmpty(symbol: "gauge.with.dots.needle.0percent", text: "Connect a provider to see its 5-hour and weekly limits.") {
@@ -190,6 +245,11 @@ struct HomePage: View {
     }
 
     private func navigate(_ page: SidebarItem) {
+        // The Shelf has no page in the window: it lives in the notch, or the menu bar panel without one.
+        if page.isShelfPage {
+            if !NotchController.shared.openShelf(page == .clipboard ? .clipboard : .shelf) { LiveSurfaces.shared.toggleMenuBarPanel() }
+            return
+        }
         withAnimation(.snappy(duration: 0.2)) { state.sidebar = page }
     }
 
@@ -412,8 +472,11 @@ private struct HomeSessionRow: View {
                 AgentIconView(agent: session.agent, size: 16)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(session.title).font(NFont.small.weight(.medium)).foregroundStyle(N.text).lineLimit(1)
-                    Text("\(session.projectName) · \(AgentFormat.duration(now.timeIntervalSince(session.startedAt)))")
-                        .font(NFont.caption).foregroundStyle(N.text2).lineLimit(1)
+                    HStack(spacing: 5) {
+                        Text("\(session.projectName) · \(AgentFormat.duration(now.timeIntervalSince(session.startedAt)))")
+                            .font(NFont.caption).foregroundStyle(N.text2).lineLimit(1)
+                        if session.isInWorktree, let git = session.checkout { InlineBranch(git: git) }
+                    }
                 }
                 Spacer(minLength: 8)
                 HostAppIcon(session: session, size: 15)
@@ -440,7 +503,10 @@ private struct HomeServerRow: View {
             FaviconView(server: server, size: 18)
             VStack(alignment: .leading, spacing: 1) {
                 Text(server.projectName).font(NFont.small.weight(.medium)).foregroundStyle(N.text).lineLimit(1)
-                Text(server.uptimeText).font(NFont.caption).foregroundStyle(N.text2).lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(server.uptimeText).font(NFont.caption).foregroundStyle(N.text2).lineLimit(1)
+                    if let git = server.git { InlineBranch(git: git) }
+                }
             }
             Spacer(minLength: 8)
             if state.favorites.contains(server.port) {
@@ -537,5 +603,76 @@ private struct ShelfStrip: View {
             }
         }
         .onDrop(of: ShelfDrop.types, isTargeted: $targeted) { store.add(providers: $0) }
+    }
+}
+
+private struct HomePullRow: View {
+    var pull: PullRequest
+    @State private var hover = false
+
+    var body: some View {
+        Button { ProcessManager.openURL(pull.url) } label: {
+            HStack(spacing: 10) {
+                CheckGlyph(state: pull.checks, size: 13).frame(width: 16)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(pull.title).font(NFont.small.weight(.medium)).foregroundStyle(N.text).lineLimit(1)
+                    Text("\(pull.repoName) #\(pull.number) · \(pull.checks.title)" + (pull.role == .reviewRequested ? " · by \(pull.author)" : ""))
+                        .font(NFont.caption).foregroundStyle(N.text2).lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                if pull.role == .reviewRequested {
+                    Tag(text: "Review", color: .blue, symbol: "eye")
+                } else if pull.isReadyToMerge {
+                    Tag(text: "Ready", color: .green, symbol: "checkmark")
+                } else if pull.review == .changesRequested {
+                    Tag(text: "Changes", color: .red)
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 42)
+            .background(hover ? N.hover : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .help(pull.url)
+    }
+}
+
+private struct HomeRepoRow: View {
+    var repo: Repo
+    var forgotten: Bool
+    var action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                FolderIconView(folder: repo.root, name: repo.name, size: 18)
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 5) {
+                        Text(repo.name).font(NFont.small.weight(.medium)).foregroundStyle(N.text).lineLimit(1)
+                        if forgotten {
+                            Image(systemName: "clock.badge.exclamationmark").font(.system(size: 10)).foregroundStyle(TagColor.orange.fg)
+                                .help("Untouched for a while")
+                        }
+                    }
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.triangle.branch").font(.system(size: 9, weight: .semibold))
+                        Text("\(repo.refLabel) · \(RepoFormat.ago(repo.lastTouched))").lineLimit(1).truncationMode(.middle)
+                    }
+                    .font(NFont.caption).foregroundStyle(N.text2)
+                }
+                Spacer(minLength: 8)
+                RepoStateChips(changes: repo.changes, unpushed: repo.unpushedCount, behind: 0)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 42)
+            .background(hover ? N.hover : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .help(repo.displayPath)
     }
 }

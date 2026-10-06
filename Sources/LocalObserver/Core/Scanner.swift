@@ -1,4 +1,5 @@
 import Foundation
+import LocalObserverCore
 
 /// Discovers listening TCP sockets via lsof, enriches with ps + cwd + project guess + HTTP probe.
 enum PortScanner {
@@ -40,16 +41,26 @@ enum PortScanner {
 
         let info = await background { runPs(pids: pids) }
         let (dirs, guesses) = await background { enrich(sockets: sockets, info: info) }
+        // HEAD is re-read every scan (a file read, no git spawn), so a branch switch shows up within one tick.
+        let checkouts = await background { () -> [Int32: GitCheckout] in
+            var out: [Int32: GitCheckout] = [:]
+            for (pid, guess) in guesses {
+                let folder = guess.root.isEmpty ? (dirs[pid] ?? "") : guess.root
+                if let checkout = GitCheckout.locate(folder) { out[pid] = checkout }
+            }
+            return out
+        }
 
         var entries: [ServerEntry] = sockets.map { sock in
             let p = info[sock.pid] ?? ProcInfo()
             let cmd = p.args.isEmpty ? sock.processName : p.args
             let guess = guesses[sock.pid] ?? ProjectGuess(name: "Unknown", type: .other, root: "")
+            let git = checkouts[sock.pid]
             return ServerEntry(
                 pid: sock.pid, pgid: p.pgid, processName: sock.processName, command: cmd,
                 port: sock.port, bindAddress: sock.address, workingDirectory: dirs[sock.pid] ?? "",
-                projectRoot: guess.root, projectName: guess.name, projectType: guess.type,
-                cpu: p.cpu, rssKB: p.rssKB, uptime: p.uptime
+                projectRoot: guess.root, projectName: displayName(guess, git: git), projectType: guess.type,
+                cpu: p.cpu, rssKB: p.rssKB, uptime: p.uptime, git: git
             )
         }
 
@@ -63,6 +74,13 @@ enum PortScanner {
             entries[i].iconHref = p.iconHref
         }
         return entries
+    }
+
+    /// A server started at the top of a linked worktree goes by its repository's name: worktree folders are often
+    /// throwaway names (`t3code-0e8aa87a`), and the branch tag tells two checkouts of one repo apart.
+    static func displayName(_ guess: ProjectGuess, git: GitCheckout?) -> String {
+        guard let git, git.isLinkedWorktree, !guess.root.isEmpty, guess.root == git.root else { return guess.name }
+        return git.repoName
     }
 
     // MARK: - process helpers

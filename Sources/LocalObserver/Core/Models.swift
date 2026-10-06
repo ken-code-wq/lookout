@@ -1,4 +1,5 @@
 import Foundation
+import LocalObserverCore
 
 enum ProjectType: String, Codable, CaseIterable {
     case node = "Node"
@@ -91,8 +92,11 @@ struct ServerEntry: Identifiable, Hashable {
     var rssKB: Int = 0
     var uptime: TimeInterval = 0
     var managedID: UUID? = nil
+    /// Branch and worktree of the folder it was started from, when that's a git checkout.
+    var git: GitCheckout? = nil
 
     var isManaged: Bool { managedID != nil }
+    var isInWorktree: Bool { git?.isLinkedWorktree ?? false }
 
     var urlString: String {
         let host: String
@@ -271,6 +275,23 @@ enum PortRangeFilter: String, CaseIterable, Identifiable, Hashable {
     }
 }
 
+enum ServerCheckoutFilter: String, CaseIterable, Identifiable, Hashable {
+    case any = "Any checkout"
+    case main = "Main checkout"
+    case worktree = "Worktrees"
+    case none = "Not in git"
+    var id: String { rawValue }
+
+    func matches(_ s: ServerEntry) -> Bool {
+        switch self {
+        case .any: return true
+        case .main: return s.git != nil && !s.isInWorktree
+        case .worktree: return s.isInWorktree
+        case .none: return s.git == nil
+        }
+    }
+}
+
 /// Filters on the servers table, layered on top of the sidebar group and search. Empty sets mean "everything".
 struct ServerFilter: Hashable {
     var statuses: Set<ServerStatusFilter> = []
@@ -280,6 +301,7 @@ struct ServerFilter: Hashable {
     var memory: ServerMemoryFilter = .any
     var uptime: ServerUptimeFilter = .any
     var ports: PortRangeFilter = .any
+    var checkout: ServerCheckoutFilter = .any
 
     var isNarrowed: Bool { self != ServerFilter() }
 
@@ -297,6 +319,6 @@ struct ServerFilter: Hashable {
         case .network: if ServerExposure.isLoopback(s.bindAddress) { return false }
         }
         if memory != .any, s.rssKB < memory.rawValue { return false }
-        return uptime.matches(s.uptime) && ports.matches(s.port)
+        return uptime.matches(s.uptime) && ports.matches(s.port) && checkout.matches(s)
     }
 }

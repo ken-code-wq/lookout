@@ -162,6 +162,7 @@ public final class AgentStore: ObservableObject {
             let counts = self.lastCounts
             var snapshot = fresh
             snapshot.usageEvents = []
+            snapshot.processes = snapshot.processes.map(Self.withCheckout)
             snapshot.integrations = fresh.integrations.map { integration in
                 var updated = integration
                 updated.usageEventCount = counts[integration.agent] ?? 0
@@ -201,6 +202,15 @@ public final class AgentStore: ObservableObject {
     public var isUsageReady: Bool { appliedUsageGeneration == usageGeneration && appliedGlanceGeneration == glanceGeneration }
 
     /// Snapshots compare equal when everything but the scan timestamp matches.
+    /// Attaches the live git checkout to a running session. Its branch beats the transcript's, which can lag a switch.
+    static func withCheckout(_ session: AgentSession) -> AgentSession {
+        guard !session.projectPath.isEmpty, let checkout = GitCheckout.locate(session.projectPath) else { return session }
+        var updated = session
+        updated.checkout = checkout
+        if checkout.branch != nil || updated.branch.isEmpty { updated.branch = checkout.refLabel }
+        return updated
+    }
+
     private static func sameContent(_ lhs: AgentSnapshot, _ rhs: AgentSnapshot) -> Bool {
         lhs.processes == rhs.processes && lhs.sessions == rhs.sessions && lhs.limitReports == rhs.limitReports
             && lhs.integrations == rhs.integrations && lhs.warnings == rhs.warnings

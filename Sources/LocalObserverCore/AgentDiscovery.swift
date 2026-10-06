@@ -483,8 +483,11 @@ public enum AgentDiscovery {
             "docker-compose.yml", "compose.yaml", ".git"
         ]
         var directory = URL(fileURLWithPath: path)
+        // A linked worktree's folder is often a throwaway name (`t3code-0e8aa87a`); count its work under the repo.
+        let checkout = GitCheckout.locate(path)
         for _ in 0..<6 {
             if markers.contains(where: { FileManager.default.fileExists(atPath: directory.appendingPathComponent($0).path) }) {
+                if let checkout, checkout.isLinkedWorktree, checkout.root == directory.path { return checkout.repoName }
                 return directory.lastPathComponent
             }
             let parent = directory.deletingLastPathComponent().path
