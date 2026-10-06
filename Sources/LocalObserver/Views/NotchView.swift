@@ -815,6 +815,7 @@ private struct NotchSessionRow: View {
                             Text("\(session.projectName) · \(AgentFormat.duration(context.date.timeIntervalSince(session.startedAt)))")
                                 .font(.system(size: 10.5)).foregroundStyle(NotchColor.text2).lineLimit(1)
                             if session.isInWorktree, let git = session.checkout { NotchBranch(git: git) }
+                            SessionDiffChip(session: session, style: .notch)
                         }
                     }
                 }

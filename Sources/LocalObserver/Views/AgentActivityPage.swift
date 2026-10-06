@@ -357,6 +357,7 @@ private struct RunningSessionRow: View {
                             .layoutPriority(1)
                         SessionBranchTag(session: session, maxWidth: 170)
                         SessionPullChip(session: session)
+                        SessionDiffChip(session: session)
                     }
                     Text(subtitle)
                         .font(NFont.caption)
