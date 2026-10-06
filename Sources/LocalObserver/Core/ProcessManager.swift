@@ -136,7 +136,8 @@ enum ProcessManager {
 
     static func openInEditor(path: String) {
         guard !path.isEmpty else { return }
-        let url = URL(fileURLWithPath: path, isDirectory: true)
+        // Without `isDirectory`, Foundation checks the disk, so single files (from the agent diff) open as files.
+        let url = URL(fileURLWithPath: path)
         let editors = ["com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92", "dev.zed.Zed", "com.sublimetext.4"]
         for id in editors {
             if let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {

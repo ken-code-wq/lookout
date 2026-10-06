@@ -43,6 +43,9 @@ struct AgentInspectorView: View {
                             AgentHandoffPanel(session: session)
                         }
                     }
+                    if let root = AgentDiffs.root(of: session) {
+                        group("Changes") { AgentChangesPanel(session: session, root: root) }
+                    }
                     group("Session") {
                         PropertyRow(symbol: "folder", label: "Project") {
                             Text(session.projectName).help(session.projectPath)

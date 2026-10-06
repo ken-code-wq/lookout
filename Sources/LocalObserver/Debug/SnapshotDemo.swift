@@ -257,6 +257,102 @@ enum SnapshotDemo {
         ])
     }
 
+    // MARK: - Live diffs
+
+    /// What the running sessions have changed: a real-looking diff for the first, a sprawling one (past the scale
+    /// warning) for the queue migration, small ones elsewhere, and one clean checkout.
+    static func loadDiffs(into store: RepoDiffStore, sessions: [AgentSession]) {
+        let now = Date()
+        var summaries: [String: RepoDiffSummary] = [:]
+        var details: [String: RepoWorkDiff] = [:]
+        for session in sessions {
+            guard let root = session.checkout?.root else { continue }
+            let files: [RepoDiffFile]
+            var committed: RepoSessionCommits?
+            switch session.agent {
+            case .claude:
+                files = [
+                    RepoDiffFile(path: "search/ratelimit.go", status: .untracked, additions: 14, patch: """
+                    @@ -0,0 +1,14 @@
+                    +package search
+                    +
+                    +import "golang.org/x/time/rate"
+                    +
+                    +// Limiter hands out one token bucket per tenant.
+                    +type Limiter struct {
+                    +\tmu      sync.Mutex
+                    +\tbuckets map[string]*rate.Limiter
+                    +}
+                    +
+                    +func (l *Limiter) Allow(tenant string, cfg tenants.Limits) bool {
+                    +\treturn l.bucket(tenant, cfg).Allow()
+                    +}
+                    +
+                    """),
+                    RepoDiffFile(path: "search/handler.go", status: .modified, additions: 5, deletions: 3, patch: """
+                    @@ -41,9 +41,11 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
+                     \ttenant := tenants.FromContext(r.Context())
+                    -\tresults, err := h.engine.Query(r.Context(), q)
+                    -\tif err != nil {
+                    -\t\thttp.Error(w, err.Error(), 500)
+                    +\tif !h.limiter.Allow(tenant.ID, tenant.Limits) {
+                    +\t\tw.Header().Set("Retry-After", "1")
+                    +\t\thttp.Error(w, "rate limited", http.StatusTooManyRequests)
+                    +\t\tmetrics.RateLimited.WithLabelValues(tenant.ID).Inc()
+                     \t\treturn
+                     \t}
+                    +\tresults, err := h.engine.Query(r.Context(), q)
+                    """),
+                    RepoDiffFile(path: "docs/rate limits.md", oldPath: "docs/limits.md", status: .renamed, additions: 3, deletions: 1, patch: """
+                    @@ -1,4 +1,6 @@
+                    -# Limits
+                    +# Rate limits
+                    +
+                    +Search allows 20 requests per second per tenant, with bursts up to 40.
+
+                     Limits are configured per tenant in `tenants.yaml`.
+                    """),
+                    RepoDiffFile(path: "docs/assets/limits.png", status: .modified, isBinary: true),
+                ]
+                committed = RepoSessionCommits(base: "8c41d2e9a0b7f3", commits: [
+                    RepoDiffCommit(sha: "f2a9c1b77e0d45", subject: "Add per-tenant limits to tenants.Config", date: now.addingTimeInterval(-25 * 60)),
+                    RepoDiffCommit(sha: "3be70d4c19a822", subject: "Metrics: count rate-limited requests", date: now.addingTimeInterval(-14 * 60)),
+                ], files: [
+                    RepoDiffFile(path: "tenants/config.go", status: .modified, additions: 22, deletions: 4, patch: """
+                    @@ -12,6 +12,12 @@ type Config struct {
+                     \tName   string
+                     \tRegion string
+                    +\tLimits Limits `yaml:"limits"`
+                    +}
+                    +
+                    +type Limits struct {
+                    +\tRate  float64 `yaml:"rate"`
+                    +\tBurst int     `yaml:"burst"`
+                     }
+                    """),
+                    RepoDiffFile(path: "metrics/metrics.go", status: .modified, additions: 6, deletions: 0),
+                ], baseIsAncestor: true)
+            case .qoder:
+                files = (0..<43).map { i in
+                    RepoDiffFile(path: "jobs/\(["billing", "email", "export", "sync"][i % 4])/worker_\(i).ts", status: i % 9 == 0 ? .added : .modified,
+                                 additions: 6 + (i * 7) % 40, deletions: (i * 5) % 18)
+                }
+            case .codex:
+                files = [RepoDiffFile(path: "tests/auth.test.ts", status: .modified, additions: 9, deletions: 4)]
+            case .antigravity:
+                files = [RepoDiffFile(path: "src/settings/theme.css", status: .modified, additions: 48, deletions: 12),
+                         RepoDiffFile(path: "src/settings/Settings.tsx", status: .modified, additions: 31, deletions: 9),
+                         RepoDiffFile(path: "src/settings/dark.css", status: .untracked, additions: 66)]
+            default:
+                files = []
+            }
+            summaries[root] = RepoDiffSummary(files)
+            details[RepoDiffStore.detailKey(root: root, since: session.startedAt)] =
+                RepoWorkDiff(root: root, head: "3be70d4c19a822", uncommitted: files, committed: committed, checkedAt: now.addingTimeInterval(-6))
+        }
+        store.loadDemo(summaries: summaries, details: details)
+    }
+
     // MARK: - Repos
 
     static func loadRepos(into store: RepoStore) {

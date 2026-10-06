@@ -94,6 +94,7 @@ enum SnapshotHarness {
 
         if demo {
             SnapshotDemo.loadAgents(into: store)
+            SnapshotDemo.loadDiffs(into: RepoDiffStore.shared, sessions: store.runningSessions)
             SnapshotDemo.loadAudio()
             SnapshotDemo.loadRepos(into: RepoStore.shared)
             SnapshotDemo.loadGitHub(into: GitHubStore.shared)
@@ -132,6 +133,7 @@ enum SnapshotHarness {
                 ("ci", AnyView(CIPage(store: CIStore.shared, repos: RepoStore.shared, agents: store)), CGSize(width: width, height: 1200)),
                 ("palette", AnyView(CommandPalette(state: makeState(), agentStore: store)), CGSize(width: 640, height: 440)),
                 ("replay", AnyView(replay(store)), CGSize(width: 1180, height: 820)),
+                ("agent-diff", AnyView(agentDiff(store)), CGSize(width: 1180, height: 1100)),
                 ("settings-disk", AnyView(DiskSettingsPane()), CGSize(width: 620, height: 560)),
                 ("gh-issues", AnyView(GHRepoView(store: GitHubStore.shared, repos: RepoStore.shared, slug: "acme/aurora-api", tab: .issues)), CGSize(width: width, height: 700)),
                 ("gh-issue", AnyView(GHIssueView(store: GitHubStore.shared, slug: "acme/aurora-api", number: 231)), CGSize(width: width, height: 900)),
@@ -416,6 +418,13 @@ enum SnapshotHarness {
             let path = ProcessInfo.processInfo.environment["LOCAL_OBSERVER_SNAPSHOT_REPLAY"] ?? ""
             let _ = { session.sourcePath = path; session.agent = path.contains("/.codex/") ? .codex : .claude }()
             SessionReplayView(session: session) {}
+        }
+    }
+
+    /// The first running session's live diff: demo data in demo mode, else that session's real checkout.
+    @ViewBuilder private static func agentDiff(_ store: AgentStore) -> some View {
+        if let session = store.runningSessions.first, let root = AgentDiffs.root(of: session) {
+            AgentDiffView(session: session, root: root) {}
         }
     }
 

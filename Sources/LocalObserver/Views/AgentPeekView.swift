@@ -649,6 +649,7 @@ private struct PeekRow: View {
                                 .foregroundStyle(TagColor.purple.fg)
                             Text(git.refLabel).truncationMode(.middle).layoutPriority(-1)
                         }
+                        if detailed { SessionDiffChip(session: session, style: .peek) }
                     }
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
