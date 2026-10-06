@@ -46,6 +46,7 @@ struct GHPullView: View {
             tab = initialTab
             store.loadPull(slug, number)
             store.loadFiles(slug, number)
+            store.loadReviewComments(slug, number)
         }
     }
 
@@ -910,6 +911,8 @@ struct GHFilesChanged: View {
             LazyVStack(alignment: .leading, spacing: 14) {
                 ForEach(files ?? []) { file in
                     GHFileDiff(file: file, slug: slug, headRef: detail.summary.headRef,
+                               review: GHFileReview(store: store, number: number, commit: detail.commits.last?.oid,
+                                                    comments: store.reviewComments(slug, number).filter { $0.path == file.filename }),
                                collapsed: Binding(get: { collapsed.contains(file.id) },
                                                   set: { if $0 { collapsed.insert(file.id) } else { collapsed.remove(file.id) } }),
                                // Marking a file viewed folds it away, as on GitHub.
@@ -928,10 +931,13 @@ struct GHFileDiff: View {
     var file: GHFile
     var slug: String
     var headRef: String
+    var review: GHFileReview? = nil
     @Binding var collapsed: Bool
     @Binding var viewed: Bool
     @State private var showAll = false
     @State private var width: CGFloat = 600
+    /// Line a new comment is being written under.
+    @State private var composing: Int?
 
     private static let pageSize = 400
 
@@ -962,6 +968,9 @@ struct GHFileDiff: View {
                 .buttonStyle(.plain)
                 .help("Copy path")
                 Spacer(minLength: 8)
+                if let count = review?.comments.count, count > 0 {
+                    Label("\(count)", systemImage: "bubble.left").font(.system(size: 12)).foregroundStyle(N.text2).labelStyle(TightLabelStyle())
+                }
                 Toggle(isOn: $viewed) { Text("Viewed").font(.system(size: 12)) }
                     .toggleStyle(.checkbox)
                 Button { ProcessManager.openURL("https://github.com/\(slug)/blob/\(headRef)/\(file.filename)") } label: {
@@ -973,6 +982,17 @@ struct GHFileDiff: View {
             .padding(.horizontal, 10)
             .frame(height: 40)
         } content: {
+            let outdated = GHReviewComment.threads(review?.comments ?? []).filter { $0[0].line == nil }
+            if !collapsed, !outdated.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("\(outdated.count) outdated conversation\(outdated.count == 1 ? "" : "s")").font(NFont.caption).foregroundStyle(N.text2)
+                    ForEach(outdated, id: \.first!.id) { thread in
+                        GHReviewThreadView(thread: thread) { body in review?.reply(slug, thread[0].id, body) }
+                    }
+                }
+                .padding(12)
+                .background(GH.canvasSubtle)
+            }
             if !collapsed {
                 if let patch = file.patch {
                     let lines = GHDiffLine.parse(patch)
@@ -980,7 +1000,24 @@ struct GHFileDiff: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         // At least as wide as the box, so line colours run to the edge; long lines scroll sideways.
                         LazyVStack(alignment: .leading, spacing: 0) {
-                            ForEach(shown) { GHDiffLineRow(line: $0) }
+                            ForEach(shown) { line in
+                                GHDiffLineRow(line: line, onComment: canComment(line) ? { composing = line.id } : nil)
+                                ForEach(threads(at: line), id: \.first!.id) { thread in
+                                    GHReviewThreadView(thread: thread) { body in review?.reply(slug, thread[0].id, body) }
+                                        .frame(width: max(width - 130, 320), alignment: .leading)
+                                        .padding(.leading, 112).padding(.vertical, 6)
+                                }
+                                if composing == line.id {
+                                    GHLineComposer(placeholder: "Comment on line \(line.new ?? line.old ?? 0)") { body in
+                                        if let body, let target = target(line) {
+                                            review?.add(slug, file.filename, target.line, target.side, body)
+                                        }
+                                        composing = nil
+                                    }
+                                    .frame(width: max(width - 130, 320), alignment: .leading)
+                                    .padding(.leading, 112).padding(.vertical, 6)
+                                }
+                            }
                         }
                         .frame(minWidth: width, alignment: .leading)
                     }
@@ -1002,6 +1039,21 @@ struct GHFileDiff: View {
         }
     }
 
+    private func canComment(_ line: GHDiffLine) -> Bool {
+        review?.commit != nil && line.kind != .hunk && (line.new != nil || line.old != nil)
+    }
+
+    /// GitHub anchors a comment to a line on one side: the new file for additions and context, the old for deletions.
+    private func target(_ line: GHDiffLine) -> (line: Int, side: String)? {
+        if line.kind == .deletion { return line.old.map { ($0, "LEFT") } }
+        return line.new.map { ($0, "RIGHT") }
+    }
+
+    private func threads(at line: GHDiffLine) -> [[GHReviewComment]] {
+        guard let review, let t = target(line) else { return [] }
+        return GHReviewComment.threads(review.comments).filter { $0[0].line == t.line && $0[0].side == t.side }
+    }
+
     @ViewBuilder private var statusIcon: some View {
         switch file.status {
         case "added": Image(systemName: "plus.square.fill").foregroundStyle(GH.open).help("Added")
@@ -1014,11 +1066,26 @@ struct GHFileDiff: View {
 
 struct GHDiffLineRow: View {
     var line: GHDiffLine
+    var onComment: (() -> Void)? = nil
+    @State private var hover = false
 
     var body: some View {
         HStack(spacing: 0) {
             number(line.old)
             number(line.new)
+                .overlay(alignment: .trailing) {
+                    if hover, let onComment {
+                        Button(action: onComment) {
+                            Image(systemName: "plus").font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                                .frame(width: 18, height: 18)
+                                .background(GH.link, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        .offset(x: 10)
+                        .help("Comment on this line")
+                    }
+                }
+                .zIndex(1)
             HStack(spacing: 0) {
                 Text(marker).frame(width: 18, alignment: .center).foregroundStyle(markerColor)
                 Text(line.text.isEmpty ? " " : line.text)
@@ -1032,6 +1099,7 @@ struct GHDiffLineRow: View {
         .font(.system(size: 12, design: .monospaced))
         .frame(minHeight: 20)
         .textSelection(.enabled)
+        .onHover { hover = $0 }
     }
 
     private func number(_ n: Int?) -> some View {
@@ -1066,5 +1134,101 @@ struct GHDiffLineRow: View {
         case .hunk: return GH.hunkBg
         case .context: return .clear
         }
+    }
+}
+
+
+/// What a file's diff needs to show and add line comments.
+struct GHFileReview {
+    var store: GitHubStore
+    var number: Int
+    var commit: String?
+    var comments: [GHReviewComment]
+
+    @MainActor func add(_ slug: String, _ path: String, _ line: Int, _ side: String, _ body: String) {
+        guard let commit else { return }
+        store.addReviewComment(slug, number, commit: commit, path: path, line: line, side: side, body: body)
+    }
+
+    @MainActor func reply(_ slug: String, _ id: Int, _ body: String) {
+        store.replyReviewComment(slug, number, to: id, body: body)
+    }
+}
+
+/// A review conversation on a line: the comments in order, then a reply box.
+struct GHReviewThreadView: View {
+    var thread: [GHReviewComment]
+    var reply: (String) -> Void
+    @State private var replying = false
+
+    var body: some View {
+        GHBox {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(thread.enumerated()), id: \.element.id) { index, comment in
+                    if index > 0 { Rectangle().fill(GH.borderMuted).frame(height: 1) }
+                    HStack(alignment: .top, spacing: 10) {
+                        GHAvatar(login: comment.author, size: 24)
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 5) {
+                                Text(comment.author).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(N.text)
+                                Text(RepoFormat.ago(comment.createdAt)).font(.system(size: 12)).foregroundStyle(N.text2)
+                            }
+                            GHHTMLView(html: comment.bodyHTML)
+                        }
+                    }
+                    .padding(12)
+                }
+                Rectangle().fill(GH.borderMuted).frame(height: 1)
+                if replying {
+                    GHLineComposer(placeholder: "Reply…") { body in
+                        if let body { reply(body) }
+                        replying = false
+                    }
+                    .padding(10)
+                } else {
+                    Button { replying = true } label: {
+                        Text("Reply…").font(.system(size: 12.5)).foregroundStyle(N.text3)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 10).frame(height: 30)
+                            .overlay(RoundedRectangle(cornerRadius: GH.radius, style: .continuous).strokeBorder(GH.border))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(10)
+                }
+            }
+        }
+        .font(.system(size: 13))
+    }
+}
+
+/// Text box with Cancel and Comment; calls back with the text, or nil when cancelled.
+struct GHLineComposer: View {
+    var placeholder: String
+    var done: (String?) -> Void
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 8) {
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $text).font(.system(size: 13)).scrollContentBackground(.hidden).padding(6).frame(minHeight: 80)
+                    .focused($focused)
+                if text.isEmpty {
+                    Text(placeholder).font(.system(size: 13)).foregroundStyle(N.text3).padding(.horizontal, 11).padding(.vertical, 6)
+                        .allowsHitTesting(false)
+                }
+            }
+            .background(N.bg, in: RoundedRectangle(cornerRadius: GH.radius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: GH.radius, style: .continuous).strokeBorder(GH.border))
+            HStack(spacing: 8) {
+                Button("Cancel") { done(nil) }.buttonStyle(SecondaryButtonStyle())
+                Button("Comment") { done(text) }.buttonStyle(GHPrimaryButtonStyle())
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .keyboardShortcut(.return, modifiers: .command)
+            }
+        }
+        .font(.system(size: 13))
+        .onAppear { focused = true }
     }
 }

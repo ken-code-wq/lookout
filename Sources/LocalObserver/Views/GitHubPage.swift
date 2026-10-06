@@ -24,6 +24,7 @@ struct GitHubPage: View {
             }
         }
         // Loads once signed in; while GitHub is off or gh is missing, the status banner says why the page is empty.
+        .sheet(item: $store.pullDraft) { draft in GHNewPullSheet(store: store, repos: repos, draft: draft) }
         .onAppear { if repos.settings.gitHubEnabled { store.loadRepositories() } }
         .onChange(of: repos.gitHub.login) { _, login in if login != nil { store.loadRepositories() } }
     }

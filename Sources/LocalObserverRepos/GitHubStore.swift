@@ -101,6 +101,8 @@ public final class GitHubStore: ObservableObject {
     /// Keyed `slug#number`.
     @Published public private(set) var pulls: [String: GHPullDetail] = [:]
     @Published public private(set) var files: [String: [GHFile]] = [:]
+    /// Keyed `slug#number`.
+    @Published public private(set) var reviewComments: [String: [GHReviewComment]] = [:]
     @Published public private(set) var openIssues: [String: [GHIssueSummary]] = [:]
     @Published public private(set) var closedIssues: [String: [GHIssueSummary]] = [:]
     /// Keyed `slug#number`.
@@ -244,6 +246,7 @@ public final class GitHubStore: ObservableObject {
         case .pull(let slug, let number):
             loadPull(slug, number, force: true)
             loadFiles(slug, number, force: true)
+            loadReviewComments(slug, number, force: true)
         case .issue(let slug, let number):
             loadIssue(slug, number, force: true)
         }
@@ -253,6 +256,68 @@ public final class GitHubStore: ObservableObject {
         switch route {
         case nil: return loading.contains(Self.repositoriesKey)
         case .repo(let slug, _), .pull(let slug, _), .issue(let slug, _): return loading.contains { $0.contains(slug) }
+        }
+    }
+
+    // MARK: Review comments
+
+    public func loadReviewComments(_ slug: String, _ number: Int, force: Bool = false) {
+        let key = Self.pullKey(slug, number)
+        load("comments:" + key, force: force, store: { s, v in s.reviewComments[key] = v }) {
+            GitHubAPI.reviewComments(slug, number: number)
+        }
+    }
+
+    public func reviewComments(_ slug: String, _ number: Int) -> [GHReviewComment] { reviewComments[Self.pullKey(slug, number)] ?? [] }
+
+    public func addReviewComment(_ slug: String, _ number: Int, commit: String, path: String, line: Int, side: String, body: String) {
+        act("comments:" + Self.pullKey(slug, number), success: "Commented on \((path as NSString).lastPathComponent):\(line)",
+            then: { s in s.loadReviewComments(slug, number, force: true) }) {
+            GitHubAPI.addReviewComment(slug, number: number, commit: commit, path: path, line: line, side: side, body: body)
+        }
+    }
+
+    public func replyReviewComment(_ slug: String, _ number: Int, to id: Int, body: String) {
+        act("comments:" + Self.pullKey(slug, number), success: "Replied", then: { s in s.loadReviewComments(slug, number, force: true) }) {
+            GitHubAPI.replyReviewComment(slug, number: number, to: id, body: body)
+        }
+    }
+
+    // MARK: New pull request
+
+    /// The new-pull-request sheet's subject: which repository, and the head branch to start from (nil: pick one).
+    public struct PullDraft: Identifiable, Hashable, Sendable {
+        public var id: String { slug + (head ?? "") }
+        public var slug: String
+        public var head: String?
+        public init(slug: String, head: String? = nil) { self.slug = slug; self.head = head }
+    }
+
+    @Published public var pullDraft: PullDraft?
+
+    /// Opens a pull request; on success navigates to it.
+    public func createPull(_ slug: String, base: String, head: String, title: String, body: String, draft: Bool,
+                           done: @escaping (Bool) -> Void) {
+        let key = "new-pull:\(slug)"
+        guard !working.contains(key) else { return }
+        if isDemo { onActionResult?("Opened a pull request (demo)", true); done(true); return }
+        working.insert(key)
+        Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) {
+                GitHubAPI.createPull(slug, base: base, head: head, title: title, body: body, draft: draft)
+            }.value
+            guard let self else { return }
+            self.working.remove(key)
+            switch result {
+            case .success(let number):
+                self.onActionResult?("Opened #\(number)", true)
+                self.loadPulls(slug, open: true, force: true)
+                self.open(.pull(slug, number))
+                done(true)
+            case .failure(let failure):
+                self.onActionResult?(failure.message, false)
+                done(false)
+            }
         }
     }
 
@@ -467,6 +532,10 @@ public final class GitHubStore: ObservableObject {
     // MARK: Demo
 
     /// Debug/demo: shows this data and never touches GitHub. Actions report success without doing anything.
+    public func loadDemoReview(_ slug: String, _ number: Int, comments: [GHReviewComment]) {
+        reviewComments[Self.pullKey(slug, number)] = comments
+    }
+
     public func loadDemoInbox(notifications: [GHNotification], issues: [String: [GHIssueSummary]], details: [GHIssueDetail]) {
         isDemo = true
         self.notifications = notifications

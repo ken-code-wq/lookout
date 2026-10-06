@@ -438,7 +438,7 @@ struct GHPullsTab: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Spacer()
-                Button { ProcessManager.openURL("https://github.com/\(slug)/compare") } label: {
+                Button { store.pullDraft = .init(slug: slug) } label: {
                     Text("New pull request")
                 }
                 .buttonStyle(GHPrimaryButtonStyle())
@@ -761,7 +761,7 @@ struct GHBranchRow: View {
                     if !branch.isDefault {
                         Button("Compare") { ProcessManager.openURL("https://github.com/\(slug)/compare/\(branch.name)") }
                         if branch.pull == nil || branch.pull?.state.isOpen == false {
-                            Button("New Pull Request") { ProcessManager.openURL("https://github.com/\(slug)/compare/\(branch.name)?expand=1") }
+                            Button("New Pull Request…") { store.pullDraft = .init(slug: slug, head: branch.name) }
                         }
                     }
                     Button("Commits") { ProcessManager.openURL("https://github.com/\(slug)/commits/\(branch.name)") }
