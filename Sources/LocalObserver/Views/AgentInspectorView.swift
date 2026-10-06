@@ -1,10 +1,12 @@
 import SwiftUI
 import LocalObserverCore
+import LocalObserverRepos
 
 /// Right-hand panel for one agent session: where it runs, what it is doing, and what it has used.
 struct AgentInspectorView: View {
     @ObservedObject var store: AgentStore
     var session: AgentSession
+    @ObservedObject private var repos = RepoStore.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -40,8 +42,18 @@ struct AgentInspectorView: View {
                         PropertyRow(symbol: "folder", label: "Project") {
                             Text(session.projectName).help(session.projectPath)
                         }
-                        if !session.branch.isEmpty {
-                            PropertyRow(symbol: "arrow.triangle.branch", label: "Branch") { Text(session.branch) }
+                        if !session.branch.isEmpty || session.checkout != nil {
+                            PropertyRow(symbol: "arrow.triangle.branch", label: "Branch") { SessionBranchTag(session: session) }
+                        }
+                        if let pull = AgentLinks.pull(for: session, in: repos) {
+                            PropertyRow(symbol: "arrow.triangle.pull", label: "Pull request") {
+                                AgentPullValue(pull: pull)
+                            }
+                        }
+                        if let git = session.checkout, git.isLinkedWorktree {
+                            PropertyRow(symbol: "square.stack.3d.down.right", label: "Worktree") {
+                                WorktreeValue(git: git)
+                            }
                         }
                         PropertyRow(symbol: "cpu", label: "Model") { valueText(session.model) }
                         if let host = session.process?.host {

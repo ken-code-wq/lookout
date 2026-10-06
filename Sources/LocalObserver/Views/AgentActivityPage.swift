@@ -349,10 +349,15 @@ private struct RunningSessionRow: View {
             HStack(spacing: 10) {
                 AgentIconView(agent: session.agent, size: 20)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(session.title)
-                        .font(NFont.bodyMedium)
-                        .foregroundStyle(N.text)
-                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text(session.title)
+                            .font(NFont.bodyMedium)
+                            .foregroundStyle(N.text)
+                            .lineLimit(1)
+                            .layoutPriority(1)
+                        SessionBranchTag(session: session, maxWidth: 170)
+                        SessionPullChip(session: session)
+                    }
                     Text(subtitle)
                         .font(NFont.caption)
                         .foregroundStyle(N.text2)
@@ -412,7 +417,7 @@ private struct RunningSessionRow: View {
 
     private var subtitle: String {
         var parts = [session.projectName]
-        if !session.branch.isEmpty { parts.append(session.branch) }
+        if let owner = session.checkout?.worktreeOwner { parts.append("\(owner) worktree") }
         if !session.projectPath.isEmpty { parts.append((session.projectPath as NSString).abbreviatingWithTildeInPath) }
         return parts.joined(separator: "  ·  ")
     }
