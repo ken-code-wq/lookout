@@ -85,6 +85,7 @@ enum SnapshotHarness {
         var settings = AgentSettings()
         settings.hasCompletedSetup = !firstRun
         settings.accountLimitAgents = firstRun ? [] : Set(AgentKind.allCases.filter(AgentLimitClients.supportsAccountLimits))
+        settings.budgets = [.claude: AgentBudget(daily: 8, weekly: 40), .codex: AgentBudget(daily: 1)]
         defaults.set(try? JSONEncoder().encode(settings), forKey: "LocalObserver.agentSettings")
         let demo = SnapshotDemo.isEnabled
         // Demo stores never read or write the real usage ledger, and never scan.

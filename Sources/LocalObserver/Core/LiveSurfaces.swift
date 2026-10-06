@@ -81,6 +81,7 @@ final class LiveSurfaces: NSObject, NSWindowDelegate {
             state?.show(Toast(message: message, symbol: ok ? "checkmark.circle" : "exclamationmark.triangle", tone: ok ? .success : .danger))
         }
         DiskCoordinator.shared.attach(state: state, agentStore: agentStore)
+        BudgetNotifier.shared.attach(to: agentStore)
         GitHubStore.shared.onActionResult = { [weak state] message, ok in
             state?.show(Toast(message: message, symbol: ok ? "checkmark.circle" : "exclamationmark.triangle", tone: ok ? .success : .danger))
         }

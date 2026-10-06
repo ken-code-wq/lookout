@@ -622,6 +622,8 @@ public struct AgentSettings: Codable, Hashable, Sendable {
     public var notifyNeedsInput: Bool
     /// Notify once a limit window crosses this percentage. Nil disables limit notifications.
     public var limitAlertPercent: Int?
+    /// Spending caps per agent, in dollars.
+    public var budgets: [AgentKind: AgentBudget] = [:]
 
     public init(
         enabledAgents: Set<AgentKind> = Set(AgentKind.allCases),
@@ -651,6 +653,61 @@ public struct AgentSettings: Codable, Hashable, Sendable {
         accountLimitAgents = try c.decodeIfPresent(Set<AgentKind>.self, forKey: .accountLimitAgents) ?? []
         notifyNeedsInput = try c.decodeIfPresent(Bool.self, forKey: .notifyNeedsInput) ?? false
         limitAlertPercent = try c.decodeIfPresent(Int.self, forKey: .limitAlertPercent)
+        budgets = try c.decodeIfPresent([AgentKind: AgentBudget].self, forKey: .budgets) ?? [:]
+    }
+}
+
+/// A spending cap for one agent: per day, per week (Monday to Sunday by your calendar), or both.
+public struct AgentBudget: Codable, Hashable, Sendable {
+    public var daily: Double?
+    public var weekly: Double?
+    /// Warn at this share of a cap, before reaching it.
+    public var warnAt: Double = 0.8
+
+    public init(daily: Double? = nil, weekly: Double? = nil, warnAt: Double = 0.8) {
+        self.daily = daily
+        self.weekly = weekly
+        self.warnAt = warnAt
+    }
+
+    public var isEmpty: Bool { daily == nil && weekly == nil }
+}
+
+/// What an agent has cost today and this week.
+public struct AgentSpend: Hashable, Sendable {
+    public var today: Double = 0
+    public var week: Double = 0
+    /// Some of the cost came from the price table rather than the agent's report.
+    public var estimated = false
+
+    public init(today: Double = 0, week: Double = 0, estimated: Bool = false) {
+        self.today = today
+        self.week = week
+        self.estimated = estimated
+    }
+
+    /// How far into a budget this is, worst of daily and weekly: 0…1+, with which cap it is.
+    public func progress(_ budget: AgentBudget) -> (fraction: Double, period: String, spent: Double, cap: Double)? {
+        var worst: (Double, String, Double, Double)?
+        if let cap = budget.daily, cap > 0 { worst = (today / cap, "today", today, cap) }
+        if let cap = budget.weekly, cap > 0, week / cap > (worst?.0 ?? -1) { worst = (week / cap, "this week", week, cap) }
+        return worst.map { (fraction: $0.0, period: $0.1, spent: $0.2, cap: $0.3) }
+    }
+
+    /// Sums cost by agent for today and the current week.
+    public static func compute(_ events: [AgentUsageEvent], now: Date = Date(), calendar: Calendar = .current) -> [AgentKind: AgentSpend] {
+        let day = calendar.startOfDay(for: now)
+        let week = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? day
+        var spend: [AgentKind: AgentSpend] = [:]
+        for event in events where event.observedAt >= week {
+            guard let cost = event.cost, cost > 0 else { continue }
+            var s = spend[event.agent] ?? AgentSpend()
+            s.week += cost
+            if event.observedAt >= day { s.today += cost }
+            s.estimated = s.estimated || event.costIsEstimated
+            spend[event.agent] = s
+        }
+        return spend
     }
 }
 

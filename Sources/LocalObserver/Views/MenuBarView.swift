@@ -120,7 +120,7 @@ struct MenuBarView: View {
             case .usage: return agentStore.hasUsageHistory
             case .sound: return true
             case .agents: return !agents.isEmpty
-            case .limits: return !limitWindows.isEmpty
+            case .limits: return !limitWindows.isEmpty || !budgetRows.isEmpty
             case .repos: return !repoStore.pulls.isEmpty || !repoStore.attentionRepos.isEmpty
                 || !MenuReposContent.activeWorktrees(in: repoStore).isEmpty
             case .servers: return true
@@ -185,6 +185,9 @@ struct MenuBarView: View {
             if !prefs.isCollapsed(menu: "limits") {
                 VStack(spacing: 7) {
                     ForEach(limitWindows) { MenuLimitRow(window: $0) }
+                    ForEach(budgetRows, id: \.agent) { row in
+                        MenuBudgetRow(agent: row.agent, progress: row.progress, warnAt: row.warnAt)
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 2)
@@ -285,6 +288,14 @@ struct MenuBarView: View {
                 .padding(.bottom, 6)
             }
         }
+    }
+
+    /// Agents with a budget, tightest first.
+    private var budgetRows: [(agent: AgentKind, progress: (fraction: Double, period: String, spent: Double, cap: Double), warnAt: Double)] {
+        agentStore.settings.budgets.compactMap { agent, budget in
+            (agentStore.spend[agent] ?? AgentSpend()).progress(budget).map { (agent, $0, budget.warnAt) }
+        }
+        .sorted { $0.progress.fraction > $1.progress.fraction }
     }
 
     private var reposSummary: String {
