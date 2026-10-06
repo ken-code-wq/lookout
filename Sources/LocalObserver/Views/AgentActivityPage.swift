@@ -454,6 +454,9 @@ struct SessionMenu: View {
             Button("Jump to \(host.name)") { AgentActions.jump(to: session) }
             Divider()
         }
+        Button("Replay Session") { LiveSurfaces.shared.replay(session) }
+            .disabled(session.sourcePath.isEmpty || !SessionReplayReader.supports(session.agent))
+        Divider()
         Button("Reveal Project in Finder") { AgentActions.reveal(session.projectPath) }
             .disabled(session.projectPath.isEmpty)
         Button("Show Transcript File") { AgentActions.openSource(session.sourcePath) }

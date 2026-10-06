@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import SwiftUI
+import LocalObserverCore
 
 /// Pages of the main window, grouped in the sidebar as Home, then one section per pillar: Agents, Repos, Servers.
 enum SidebarItem: Hashable {
@@ -126,6 +127,8 @@ final class AppState: ObservableObject {
     @Published var selection: String? = nil
     @Published var toast: Toast? = nil
     @Published var draft: LauncherDraft? = nil
+    /// Session shown in the replay sheet.
+    @Published var replaySession: AgentSession? = nil
     @Published var sortKey: SortKey = .port
     @Published var sortDescending = false
     @Published var serverFilter = ServerFilter()

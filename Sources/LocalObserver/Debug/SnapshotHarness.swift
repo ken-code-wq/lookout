@@ -126,6 +126,7 @@ enum SnapshotHarness {
                 ("pulls", AnyView(PullRequestsPage(store: RepoStore.shared)), CGSize(width: width, height: 800)),
                 ("settings-repos", AnyView(RepoSettingsPane()), CGSize(width: 620, height: 900)),
                 ("cleanup", AnyView(CleanupPage(store: DiskStore.shared)), CGSize(width: width, height: 1500)),
+                ("replay", AnyView(replay(store)), CGSize(width: 1180, height: 820)),
                 ("settings-disk", AnyView(DiskSettingsPane()), CGSize(width: 620, height: 560)),
                 ("gh-repos", AnyView(GitHubPage(store: GitHubStore.shared, repos: RepoStore.shared, agents: store)), CGSize(width: width, height: 1100)),
                 ("gh-code", AnyView(GHRepoView(store: GitHubStore.shared, repos: RepoStore.shared, slug: "acme/aurora-api", tab: .code)), CGSize(width: width, height: 1100)),
@@ -399,6 +400,15 @@ enum SnapshotHarness {
             return true
         }
         return ImageThumbnail.png(NSImage(data: image.tiffRepresentation ?? Data()) ?? image) ?? Data()
+    }
+
+    /// `LOCAL_OBSERVER_SNAPSHOT_REPLAY=/path/to/transcript.jsonl` replays that file under a demo session's name.
+    @ViewBuilder private static func replay(_ store: AgentStore) -> some View {
+        if var session = store.runningSessions.first ?? store.recentSessions.first {
+            let path = ProcessInfo.processInfo.environment["LOCAL_OBSERVER_SNAPSHOT_REPLAY"] ?? ""
+            let _ = { session.sourcePath = path; session.agent = path.contains("/.codex/") ? .codex : .claude }()
+            SessionReplayView(session: session) {}
+        }
     }
 
     private static func reposPage() -> some View {
