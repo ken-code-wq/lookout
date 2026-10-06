@@ -7,6 +7,7 @@ enum ReplayChecks {
         if let path = ProcessInfo.processInfo.environment["REPLAY_PROBE"] { probe(path) }
         checkClaude()
         checkDiff()
+        checkBudgets()
     }
 
     /// `REPLAY_PROBE=/path/to/transcript.jsonl`: what a replay of a real session contains.
@@ -52,6 +53,29 @@ enum ReplayChecks {
         precondition(replay.files.first?.added == 1 && replay.files.first?.removed == 1, "Edit trimmed to what changed")
         precondition(replay.end!.timeIntervalSince(replay.start!) == 8, "Duration from the first to the last step")
         precondition(SessionReplayReader.supports(.codex) && !SessionReplayReader.supports(.antigravity), "Supported agents")
+    }
+
+    /// Budgets: spend sums by agent for today and the week, and progress reports the tighter cap.
+    private static func checkBudgets() {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        cal.firstWeekday = 2
+        let now = ISO8601DateFormatter().date(from: "2026-10-07T12:00:00Z")!   // a Wednesday
+        func event(_ agent: AgentKind, _ at: String, _ cost: Double?) -> AgentUsageEvent {
+            AgentUsageEvent(id: UUID().uuidString, agent: agent, sessionID: "s", projectPath: "", projectName: "", model: "",
+                            observedAt: ISO8601DateFormatter().date(from: at)!, usage: .zero, cost: cost, requests: 1,
+                            sourcePath: "", sourceKind: .transcript, costIsEstimated: false)
+        }
+        let spend = AgentSpend.compute([
+            event(.claude, "2026-10-07T09:00:00Z", 2.5), event(.claude, "2026-10-06T09:00:00Z", 4),
+            event(.claude, "2026-10-04T09:00:00Z", 100),   // last week's Sunday
+            event(.codex, "2026-10-07T01:00:00Z", nil),
+        ], now: now, calendar: cal)
+        precondition(spend[.claude] == AgentSpend(today: 2.5, week: 6.5), "Spend today and this week: \(String(describing: spend[.claude]))")
+        precondition(spend[.codex] == nil, "Events without cost don't count")
+        let p = spend[.claude]!.progress(AgentBudget(daily: 10, weekly: 8))!
+        precondition(p.period == "this week" && abs(p.fraction - 6.5 / 8) < 0.0001, "Progress takes the tighter cap")
+        precondition(AgentSpend().progress(AgentBudget()) == nil, "No caps, no progress")
     }
 
     private static func checkDiff() {

@@ -31,6 +31,7 @@ struct AgentLimitsPage: View {
                             }
                         }
                     }
+                    BudgetsSection(store: store).padding(.top, 34)
                     if !connectable.isEmpty {
                         connectSection.padding(.top, withWindows.isEmpty ? 0 : 40)
                     }

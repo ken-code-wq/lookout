@@ -16,6 +16,8 @@ public final class AgentStore: ObservableObject {
     @Published public var searchText = "" { didSet { if searchText != oldValue { scheduleSearchRebuild() } } }
     /// Everything recorded today across enabled agents, regardless of the Usage page filters. Drives the menu bar and Dock.
     @Published public private(set) var todayTotals = AgentUsageTotals()
+    /// Cost per agent today and this week, for budgets.
+    @Published public private(set) var spend: [AgentKind: AgentSpend] = [:]
     /// Today's usage per model, most tokens first.
     @Published public private(set) var todayModels: [AgentUsageRow] = []
     /// Daily totals for the last 365 days across the agents the Usage page filter keeps
@@ -354,6 +356,7 @@ public final class AgentStore: ObservableObject {
         var heatmap: [AgentHeatmapDay]
         var dailyByAgent: [AgentKind: [AgentHeatmapDay]]
         var glance: AgentUsageReport
+        var spend: [AgentKind: AgentSpend]
     }
 
     /// Rebuilds every derived report off the main actor and publishes the result when it lands.
@@ -402,6 +405,7 @@ public final class AgentStore: ObservableObject {
             if todayModels != bundle.todayModels { todayModels = bundle.todayModels }
             if heatmap != bundle.heatmap { heatmap = bundle.heatmap }
             if dailyByAgent != bundle.dailyByAgent { dailyByAgent = bundle.dailyByAgent }
+            if spend != bundle.spend { spend = bundle.spend }
         }
         if applyGlance { glanceUsage = bundle.glance }
     }
@@ -422,7 +426,8 @@ public final class AgentStore: ObservableObject {
         let glanceReport = buildReport(events: events, filter: glance, enabledAgents: enabledAgents)
         return UsageBundle(
             usage: usage, todayTotals: todayReport.totals, todayModels: todayReport.rows,
-            heatmap: heatmap, dailyByAgent: perAgent, glance: glanceReport
+            heatmap: heatmap, dailyByAgent: perAgent, glance: glanceReport,
+            spend: AgentSpend.compute(events)
         )
     }
 
