@@ -85,6 +85,11 @@ struct LocalObserverApp: App {
                 Button("New Server…") { state.draft = LauncherDraft() }
                     .keyboardShortcut("n")
             }
+            CommandGroup(before: .toolbar) {
+                Button("Go to…") { state.paletteOpen.toggle() }
+                    .keyboardShortcut("k")
+                Divider()
+            }
             CommandGroup(after: .toolbar) {
                 Button("Refresh") {
                     if state.sidebar.isAgentPage { agentStore.refresh() }

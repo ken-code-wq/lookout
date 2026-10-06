@@ -129,6 +129,7 @@ enum SnapshotHarness {
                 ("settings-repos", AnyView(RepoSettingsPane()), CGSize(width: 620, height: 900)),
                 ("cleanup", AnyView(CleanupPage(store: DiskStore.shared)), CGSize(width: width, height: 1500)),
                 ("ci", AnyView(CIPage(store: CIStore.shared, repos: RepoStore.shared, agents: store)), CGSize(width: width, height: 1200)),
+                ("palette", AnyView(CommandPalette(state: makeState(), agentStore: store)), CGSize(width: 640, height: 440)),
                 ("replay", AnyView(replay(store)), CGSize(width: 1180, height: 820)),
                 ("settings-disk", AnyView(DiskSettingsPane()), CGSize(width: 620, height: 560)),
                 ("gh-issues", AnyView(GHRepoView(store: GitHubStore.shared, repos: RepoStore.shared, slug: "acme/aurora-api", tab: .issues)), CGSize(width: width, height: 700)),
