@@ -39,6 +39,13 @@ If you run Claude Code, Codex, Cursor and friends side by side, you end up alt-t
 - HTTP health probes with status, latency and page title
 - Start, stop and relaunch dev servers; saved launchers survive restarts
 
+**Repos, GitHub and your machine**
+- Local repositories with branches, worktrees and pull requests, plus GitHub issues, CI runs, deployments and a contribution graph
+- Agent hand-off (push, pull request, worktree cleanup), live diffs and step-by-step session replay
+- Databases and Docker containers, `.env` files, server logs with crash detection, and a Disk page that clears build artifacts and caches
+- Per-agent spending budgets, smart limit routing, a morning digest and a shareable weekly report
+- A ⌘K command palette, plus a `lookout` CLI and `lookout://` links
+
 **Everywhere on your Mac**
 - **Notch**: agents, usage, limits, servers, now playing, per-app sound, a shelf for files and clipboard history, a focus timer and keep-awake
 - **Peek**: a small floating panel that follows you across Spaces
@@ -146,6 +153,10 @@ The only network requests are the optional plan-limit checks, which call each pr
 Builds that update themselves also fetch `appcast.xml` from this repository on GitHub about once a day to look for a new version. Turn that off in Settings › General › Updates.
 
 Costs are estimates based on public API prices; subscription plans bill differently.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

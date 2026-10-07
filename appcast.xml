@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Lookout</title>
+    <link>https://github.com/ken-code-wq/lookout</link>
+    <description>Lookout updates</description>
+    <language>en</language>
+    <item>
+      <title>Version 0.2.0</title>
+      <pubDate>Wed, 07 Oct 2026 08:31:41 +0000</pubDate>
+      <sparkle:version>4</sparkle:version>
+      <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.2</sparkle:minimumSystemVersion>
+      <sparkle:fullReleaseNotesLink>https://github.com/ken-code-wq/lookout/releases/tag/v0.2.0</sparkle:fullReleaseNotesLink>
+      <description><![CDATA[<ul><li>Repos, GitHub issues, CI and deploys, hand-off, replay and live diffs</li><li>Databases, Docker, .env, server logs and crash detection, Disk cleanup</li><li>Budgets, limit routing, digest, weekly report, ⌘K palette, CLI and lookout:// links</li><li>Live hooks: answer approvals and send quick replies from the notch</li></ul>]]></description>
+      <enclosure url="https://github.com/ken-code-wq/lookout/releases/download/v0.2.0/Lookout.zip" type="application/octet-stream" sparkle:edSignature="N/Qh5WLs6y9Sj+xkUMMtTcXdDSgZny9G2Jxxgq25M4cmkt4zV5I7meqmnx8vHnFehlwoi6L3cQoxm8uDfZ7LDg==" length="12981717"/>
+    </item>
+  </channel>
+</rss>
