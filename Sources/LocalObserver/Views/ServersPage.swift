@@ -375,6 +375,7 @@ private struct ServerRow: View {
         HStack(spacing: 0) {
             HStack(spacing: 9) {
                 FaviconView(server: server, size: 20)
+                // The name always wins the space; the chips after it shorten or drop out instead.
                 Text(server.projectName)
                     .font(NFont.bodyMedium)
                     .foregroundStyle(N.text)
@@ -383,16 +384,11 @@ private struct ServerRow: View {
                 if favorite {
                     Image(systemName: "star.fill").font(.system(size: 9.5)).foregroundStyle(TagColor.yellow.fg)
                 }
-                if let git = server.git { BranchTag(git, maxWidth: 160) }
-                if server.isManaged { Tag(text: "Launcher", color: .purple) }
-                ServerHealthBadge(managedID: server.managedID)
-                // The branch is what tells two checkouts apart; the page title moves to the inspector to make room.
-                if server.git == nil, !server.pageTitle.isEmpty && server.pageTitle != server.projectName {
-                    Text(server.pageTitle).font(NFont.small).foregroundStyle(N.text3).lineLimit(1)
-                }
+                ServerRowChips(server: server)
             }
             .padding(.trailing, 12)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            .clipped()
 
             Text(verbatim: ":\(server.port)")
                 .font(NFont.mono)
@@ -448,6 +444,32 @@ private struct ServerRow: View {
     private var background: Color {
         if selected { return N.selected }
         return hover ? N.hover : .clear
+    }
+}
+
+/// Branch, Launcher, health, and page title after a server's name, in the order they give way when the row is
+/// short of room: the page title goes first, then the Launcher tag, and the branch shortens in the middle last.
+private struct ServerRowChips: View {
+    var server: ServerEntry
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            chips(launcher: true, title: true)
+            chips(launcher: true, title: false)
+            chips(launcher: false, title: false)
+        }
+    }
+
+    private func chips(launcher: Bool, title: Bool) -> some View {
+        HStack(spacing: 9) {
+            if let git = server.git { BranchTag(git, maxWidth: 280) }
+            if launcher && server.isManaged { Tag(text: "Launcher", color: .purple) }
+            ServerHealthBadge(managedID: server.managedID)
+            // The branch is what tells two checkouts apart; the page title moves to the inspector to make room.
+            if title, server.git == nil, !server.pageTitle.isEmpty && server.pageTitle != server.projectName {
+                Text(server.pageTitle).font(NFont.small).foregroundStyle(N.text3).lineLimit(1)
+            }
+        }
     }
 }
 
@@ -543,7 +565,7 @@ private struct GalleryCard: View {
                 }
                 Text(server.pageTitle.isEmpty ? (server.displayPath.isEmpty ? server.processName : server.displayPath) : server.pageTitle)
                     .font(NFont.small).foregroundStyle(N.text2).lineLimit(1).truncationMode(.middle)
-                if let git = server.git { BranchTag(git, maxWidth: 260).padding(.top, 2) }
+                if let git = server.git { BranchTag(git, maxWidth: 400).padding(.top, 2) }
                 HStack(spacing: 5) {
                     Tag(text: ":\(server.port)", mono: true)
                     StatusTag(server: server, stopping: stopping)

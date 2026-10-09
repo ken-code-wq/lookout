@@ -20,9 +20,11 @@ enum SnapshotHarness {
 
     private static var windows: [NSWindow] = []
 
-    /// A server list for a render: this Mac's, or the fake one in demo mode.
-    private static func makeState() -> AppState {
+    /// A server list for a render: this Mac's, or the fake one in demo mode. Pages that title themselves from the
+    /// sidebar (the server lists) need the item the user would have clicked, not the default Dashboard.
+    private static func makeState(sidebar: SidebarItem? = nil) -> AppState {
         let state = AppState()
+        if let sidebar { state.sidebar = sidebar }
         if SnapshotDemo.isEnabled { SnapshotDemo.loadServers(into: state) }
         return state
     }
@@ -128,9 +130,13 @@ enum SnapshotHarness {
                 ("usage", AnyView(AgentUsagePage(store: store)), CGSize(width: width, height: 1400)),
                 ("limits", AnyView(AgentLimitsPage(store: store)), CGSize(width: width, height: 1100)),
                 ("inspector", AnyView(inspector(store)), CGSize(width: 360, height: 900)),
-                ("settings", AnyView(AgentSettingsView(store: store)), CGSize(width: 620, height: 560)),
+                // The Settings scene turns the TabView into toolbar tabs; hosted offscreen it draws an empty tab
+                // strip instead (cacheDisplay doesn't capture it), so crop that strip off rather than ship a white bar.
+                ("settings", AnyView(AgentSettingsView(store: store).padding(.top, -Self.settingsTabStrip).clipped()),
+                 CGSize(width: 620, height: 560 - Self.settingsTabStrip)),
                 ("menubar", AnyView(MenuBarView(state: makeState(), agentStore: store)), CGSize(width: 360, height: 1300)),
-                ("servers", AnyView(ServersPage(state: makeState())), CGSize(width: width, height: 700)),
+                ("servers", AnyView(ServersPage(state: makeState(sidebar: .all))), CGSize(width: width, height: 700)),
+                ("servers-gallery", AnyView(serversGallery()), CGSize(width: width, height: 700)),
                 ("server-logs", AnyView(serverLogs()), CGSize(width: 420, height: 1250)),
                 ("launchers", AnyView(LaunchersPage(state: makeState())), CGSize(width: width, height: 500)),
                 ("server-logs-sheet", AnyView(serverLogsSheet()), CGSize(width: 780, height: 900)),
@@ -513,6 +519,19 @@ enum SnapshotHarness {
         return ReposPage(store: repos)
     }
 
+    /// Exactly how tall the empty tab strip of an offscreen-hosted `AgentSettingsView` is.
+    private static let settingsTabStrip: CGFloat = 28
+
+    /// The server list in gallery mode. `viewMode` persists itself, so the user's saved choice is put back after.
+    private static func serversGallery() -> some View {
+        let key = "LocalObserver.viewMode"
+        let saved = UserDefaults.standard.object(forKey: key)
+        let state = makeState(sidebar: .all)
+        state.viewMode = .gallery
+        if let saved { UserDefaults.standard.set(saved, forKey: key) } else { UserDefaults.standard.removeObject(forKey: key) }
+        return ServersPage(state: state)
+    }
+
     /// The server inspector for the first server, which in demo mode runs from a launcher and has logs.
     @ViewBuilder private static func serverLogs() -> some View {
         let state = makeState()
@@ -537,7 +556,9 @@ enum SnapshotHarness {
     }
 
     private static func render(_ view: AnyView, size: CGSize, dark: Bool, to url: URL) async {
-        let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height).background(N.bg))
+        // Top-aligned like a real window or menu: a view shorter than the canvas (the menu bar, which sizes to its
+        // content) hangs from the top edge instead of floating in the middle of empty space.
+        let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height, alignment: .top).background(N.bg))
         host.frame = CGRect(origin: .zero, size: size)
         let window = NSWindow(
             contentRect: CGRect(origin: CGPoint(x: -30_000, y: -30_000), size: size),
