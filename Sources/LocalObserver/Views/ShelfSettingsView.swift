@@ -12,7 +12,7 @@ struct ShelfSettingsPane: View {
 
     var body: some View {
         SettingsPage(title: "Shelf", message: "Park files, images, links, and text while you move between apps, and find anything you copied earlier. It all stays on this Mac, in Application Support › LocalObserver › Shelf.") {
-            Text("Clipboard history").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.bottom, 8)
+            SettingsHeader("Clipboard history", first: true)
             SettingsGroup {
                 SettingsRow(title: "Record what you copy", detail: "Passwords, and anything an app marks as private, are never recorded") {
                     Toggle("Record what you copy", isOn: Binding(get: { !store.isPaused }, set: { store.isPaused = !$0 }))
@@ -27,11 +27,10 @@ struct ShelfSettingsPane: View {
                 }
             }
             if let key = prefs.shelfHotKey {
-                Text("Press \(key.display) anywhere to search it. Change the shortcut in Menu Bar & Notch.")
-                    .font(NFont.caption).foregroundStyle(N.text3).padding(.top, 6)
+                SettingsFootnote("Press \(key.display) anywhere to search it. Change the shortcut in Menu Bar & Notch.")
             }
 
-            Text("Skip these apps").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.top, 22).padding(.bottom, 8)
+            SettingsHeader("Skip these apps")
             SettingsGroup {
                 if store.excludedApps.isEmpty {
                     Text("None. Copies from every app are recorded.")
@@ -59,25 +58,26 @@ struct ShelfSettingsPane: View {
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
+                        .frame(minHeight: 52)
                     }
                 }
             }
             HStack(spacing: 8) {
-                Button("Add App…", action: chooseApp)
+                Button("Add App…", action: chooseApp).buttonStyle(SecondaryButtonStyle())
                 Text("Nothing copied while one of these apps is in front is recorded.")
                     .font(NFont.caption).foregroundStyle(N.text3)
             }
             .padding(.top, 8)
 
-            Text("Stored").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.top, 22).padding(.bottom, 8)
+            SettingsHeader("Stored")
             SettingsGroup {
                 SettingsRow(title: "Clipboard history", detail: summary(store.history, noun: "entry", plural: "entries")) {
-                    Button("Clear…") { confirmHistory = true }
+                    Button("Clear…") { confirmHistory = true }.buttonStyle(SecondaryButtonStyle(tint: TagColor.red.fg))
                         .disabled(!store.history.contains { !$0.pinned })
                 }
                 SettingsDivider()
                 SettingsRow(title: "Shelf", detail: summary(store.shelf, noun: "item", plural: "items")) {
-                    Button("Clear…") { confirmShelf = true }
+                    Button("Clear…") { confirmShelf = true }.buttonStyle(SecondaryButtonStyle(tint: TagColor.red.fg))
                         .disabled(!store.shelf.contains { !$0.pinned })
                 }
             }
