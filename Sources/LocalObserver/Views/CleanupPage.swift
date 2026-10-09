@@ -409,7 +409,7 @@ struct DiskSettingsPane: View {
 
     var body: some View {
         SettingsPage(title: "Disk", message: "Cleanup looks inside your repositories, their worktrees and your launchers for build output, plus package caches, Xcode and Docker. Nothing is cleared until you confirm, and anything with unsaved work is never offered.") {
-            Text("Warnings").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.bottom, 8)
+            SettingsHeader("Warnings", first: true)
             SettingsGroup {
                 SettingsRow(title: "Warn when space runs low", detail: "A notification and a notch alert, once each time it drops below") {
                     Toggle("", isOn: $store.settings.notifyLowSpace).toggleStyle(.switch).labelsHidden()
@@ -424,7 +424,7 @@ struct DiskSettingsPane: View {
                 .disabled(!store.settings.notifyLowSpace)
             }
 
-            Text("Suggestions").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.top, 22).padding(.bottom, 8)
+            SettingsHeader("Suggestions")
             SettingsGroup {
                 SettingsRow(title: "Suggest clearing after", detail: "Safe items untouched this long are picked by Select suggested") {
                     Picker("", selection: $store.settings.staleDays) {
@@ -434,7 +434,7 @@ struct DiskSettingsPane: View {
                 }
             }
 
-            Text("Also look in").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.top, 22).padding(.bottom, 8)
+            SettingsHeader("Also look in")
             SettingsGroup {
                 if store.settings.extraRoots.isEmpty {
                     Text("Repositories and launchers are covered already. Add other project folders here.")
@@ -453,6 +453,7 @@ struct DiskSettingsPane: View {
                         }
                     }
                     .padding(.horizontal, 14).padding(.vertical, 8)
+                    .frame(minHeight: 44)
                 }
             }
             Button("Add Folder…") {
@@ -464,6 +465,7 @@ struct DiskSettingsPane: View {
                 guard panel.runModal() == .OK else { return }
                 for url in panel.urls where !store.settings.extraRoots.contains(url.path) { store.settings.extraRoots.append(url.path) }
             }
+            .buttonStyle(SecondaryButtonStyle())
             .padding(.top, 8)
         }
     }

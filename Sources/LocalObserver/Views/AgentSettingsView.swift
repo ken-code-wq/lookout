@@ -3,30 +3,122 @@ import Carbon.HIToolbox
 import UserNotifications
 import LocalObserverCore
 
-/// Settings window (⌘,). Changes apply immediately, like System Settings.
+/// Settings window (⌘,). Changes apply immediately, like System Settings. A sidebar of panes on the left, in the
+/// same warm neutrals as the main window, rather than the stock toolbar tabs.
 struct AgentSettingsView: View {
     @ObservedObject var store: AgentStore
+    @AppStorage("LocalObserver.settingsPane") private var pane: SettingsPane = .agents
 
     var body: some View {
-        TabView {
-            AgentsPane(store: store)
-                .tabItem { Label("Agents", systemImage: "sparkles") }
-            LimitsPane(store: store)
-                .tabItem { Label("Limits", systemImage: "gauge.with.dots.needle.33percent") }
-            RepoSettingsPane()
-                .tabItem { Label("Repos", systemImage: "square.stack.3d.up") }
-            DiskSettingsPane()
-                .tabItem { Label("Disk", systemImage: "internaldrive") }
-            MenuBarDockPane()
-                .tabItem { Label("Menu Bar & Notch", systemImage: "menubar.dock.rectangle") }
-            ShelfSettingsPane()
-                .tabItem { Label("Shelf", systemImage: "tray.full") }
-            GeneralPane(store: store)
-                .tabItem { Label("General", systemImage: "gearshape") }
-            AutomationSettingsPane()
-                .tabItem { Label("Automation", systemImage: "terminal") }
+        HStack(spacing: 0) {
+            SettingsSidebar(selection: $pane)
+            Rectangle().fill(N.divider).frame(width: 1)
+            Group {
+                switch pane {
+                case .agents: AgentsPane(store: store)
+                case .limits: LimitsPane(store: store)
+                case .repos: RepoSettingsPane()
+                case .disk: DiskSettingsPane()
+                case .menuBar: MenuBarDockPane()
+                case .shelf: ShelfSettingsPane()
+                case .general: GeneralPane(store: store)
+                case .automation: AutomationSettingsPane()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .id(pane)
         }
-        .frame(width: 620, height: 560)
+        .background(N.bg)
+        .frame(width: 820, height: 600)
+    }
+}
+
+enum SettingsPane: String, CaseIterable, Identifiable {
+    case agents, limits, repos, disk, menuBar, shelf, general, automation
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .agents: return "Agents"
+        case .limits: return "Limits"
+        case .repos: return "Repos"
+        case .disk: return "Disk"
+        case .menuBar: return "Menu Bar & Notch"
+        case .shelf: return "Shelf"
+        case .general: return "General"
+        case .automation: return "Automation"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .agents: return "sparkles"
+        case .limits: return "gauge.with.dots.needle.33percent"
+        case .repos: return "square.stack.3d.up"
+        case .disk: return "internaldrive"
+        case .menuBar: return "menubar.dock.rectangle"
+        case .shelf: return "tray.full"
+        case .general: return "gearshape"
+        case .automation: return "terminal"
+        }
+    }
+
+    /// Where the sidebar draws a gap: what Lookout watches, then where it shows up, then the app itself.
+    var startsGroup: Bool { self == .menuBar || self == .general }
+}
+
+private struct SettingsSidebar: View {
+    @Binding var selection: SettingsPane
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text("Settings")
+                .font(NFont.caption.weight(.medium))
+                .foregroundStyle(N.text3)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 6)
+            ForEach(SettingsPane.allCases) { pane in
+                if pane.startsGroup { Spacer().frame(height: 10) }
+                SettingsSidebarRow(pane: pane, selected: selection == pane) { selection = pane }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.top, 20)
+        .padding(.bottom, 12)
+        .frame(width: 196, alignment: .topLeading)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(N.bgSoft)
+    }
+}
+
+private struct SettingsSidebarRow: View {
+    var pane: SettingsPane
+    var selected: Bool
+    var action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: pane.symbol)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(selected ? N.text : N.text2)
+                    .frame(width: 18)
+                Text(pane.title)
+                    .font(.system(size: 13, weight: selected ? .medium : .regular))
+                    .foregroundStyle(N.text)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 28)
+            .background(selected ? N.pressed : (hover ? N.hover : .clear), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
@@ -37,6 +129,7 @@ private struct AgentsPane: View {
 
     var body: some View {
         SettingsPage(title: "Agents", message: "Lookout watches the agents you turn on here. It reads their session files and running processes on this Mac, and never changes them.") {
+            SettingsHeader("Watched agents", first: true)
             SettingsGroup {
                 ForEach(Array(AgentKind.allCases.enumerated()), id: \.element) { index, agent in
                     AgentToggleRow(store: store, agent: agent)
@@ -105,6 +198,7 @@ private struct LimitsPane: View {
 
     var body: some View {
         SettingsPage(title: "Plan limits", message: "Connecting an agent lets Lookout ask the provider for your current 5-hour, weekly, and monthly usage, using the sign-in that agent already has on this Mac. Tokens are read when needed and never stored.") {
+            SettingsHeader("Providers", first: true)
             SettingsGroup {
                 ForEach(Array(agents.enumerated()), id: \.element) { index, agent in
                     HStack(alignment: .top, spacing: 12) {
@@ -133,10 +227,7 @@ private struct LimitsPane: View {
                     if index < agents.count - 1 { SettingsDivider() }
                 }
             }
-            Text("Without a connection, Codex and Claude Code limits still appear when their own session logs include them.")
-                .font(NFont.caption)
-                .foregroundStyle(N.text3)
-                .padding(.top, 10)
+            SettingsFootnote("Without a connection, Codex and Claude Code limits still appear when their own session logs include them.")
         }
     }
 }
@@ -151,7 +242,7 @@ private struct MenuBarDockPane: View {
 
     var body: some View {
         SettingsPage(title: "Menu Bar, Dock & Notch", message: "Choose what Lookout shows outside its window. Changes apply immediately.") {
-            Text("Menu bar title").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.bottom, 8)
+            SettingsHeader("Menu bar title", first: true)
             SettingsGroup {
                 ForEach(Array(MenuBarItem.allCases.enumerated()), id: \.element) { index, item in
                     HStack(spacing: 12) {
@@ -169,12 +260,13 @@ private struct MenuBarDockPane: View {
                         .labelsHidden()
                     }
                     .padding(.horizontal, 14)
-                    .padding(.vertical, 9)
+                    .padding(.vertical, 10)
+                    .frame(minHeight: 52)
                     if index < MenuBarItem.allCases.count - 1 { SettingsDivider() }
                 }
             }
 
-            Text("Menu bar panel").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.top, 22).padding(.bottom, 8)
+            SettingsHeader("Menu bar panel")
             SettingsGroup {
                 ForEach(Array(prefs.menuSections.enumerated()), id: \.element) { index, section in
                     HStack(spacing: 10) {
@@ -193,12 +285,13 @@ private struct MenuBarDockPane: View {
                         .labelsHidden()
                     }
                     .padding(.horizontal, 14)
-                    .padding(.vertical, 7)
+                    .padding(.vertical, 6)
+                    .frame(minHeight: 44)
                     if index < prefs.menuSections.count - 1 { SettingsDivider() }
                 }
             }
 
-            Text("Dock").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.top, 22).padding(.bottom, 8)
+            SettingsHeader("Dock")
             SettingsGroup {
                 SettingsRow(title: "Show in Dock", detail: "Off keeps Lookout in the menu bar only") {
                     Toggle("Show in Dock", isOn: $prefs.showDockIcon).toggleStyle(.switch).labelsHidden()
@@ -218,10 +311,9 @@ private struct MenuBarDockPane: View {
                     .labelsHidden().fixedSize()
                 }
             }
-            Text("Right-click the Dock icon to jump to a running agent, open a server, or toggle Agent Peek.")
-                .font(NFont.caption).foregroundStyle(N.text3).padding(.top, 6)
+            SettingsFootnote("Right-click the Dock icon to jump to a running agent, open a server, or toggle Agent Peek.")
 
-            Text("Keyboard shortcuts").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.top, 22).padding(.bottom, 8)
+            SettingsHeader("Keyboard shortcuts")
             SettingsGroup {
                 ShortcutRow(action: .menuBar, title: "Open menu bar panel", detail: "Drops down the Lookout panel from any app")
                 SettingsDivider()
@@ -233,10 +325,9 @@ private struct MenuBarDockPane: View {
                 SettingsDivider()
                 ShortcutRow(action: .approvals, title: "Answer agent requests", detail: "Opens the oldest permission request: ⏎ allows, ⎋ denies")
             }
-            Text("These work everywhere, even when another app is in front. Press one again to close.")
-                .font(NFont.caption).foregroundStyle(N.text3).padding(.top, 6)
+            SettingsFootnote("These work everywhere, even when another app is in front. Press one again to close.")
 
-            Text("Notch").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.top, 22).padding(.bottom, 8)
+            SettingsHeader("Notch")
             SettingsGroup {
                 SettingsRow(title: "Show in the notch", detail: notchDetail) {
                     Toggle("Show in the notch", isOn: $prefs.notchEnabled).toggleStyle(.switch).labelsHidden()
@@ -299,10 +390,9 @@ private struct MenuBarDockPane: View {
                 }
                 .disabled(!prefs.notchEnabled)
             }
-            Text("Music controls work with Spotify and Apple Music. macOS asks once before Lookout can control each player.")
-                .font(NFont.caption).foregroundStyle(N.text3).padding(.top, 6)
+            SettingsFootnote("Music controls work with Spotify and Apple Music. macOS asks once before Lookout can control each player.")
 
-            Text("Plan limits at a glance").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.top, 22).padding(.bottom, 8)
+            SettingsHeader("Plan limits at a glance")
             SettingsGroup {
                 ForEach(Array(AgentKind.allCases.filter(AgentLimitClients.supportsAccountLimits).enumerated()), id: \.element) { index, agent in
                     if index > 0 { SettingsDivider() }
@@ -311,7 +401,7 @@ private struct MenuBarDockPane: View {
                         Text(agent.name).font(NFont.body).foregroundStyle(N.text)
                         Spacer(minLength: 12)
                         if let position = prefs.limitProviders.firstIndex(of: agent), prefs.limitProviders.count > 1 {
-                            Text("Arc \(position + 1)").font(NFont.caption).foregroundStyle(N.text3)
+                            Tag(text: "Arc \(position + 1)", color: .blue)
                         }
                         Toggle(agent.name, isOn: Binding(
                             get: { prefs.limitProviders.contains(agent) },
@@ -320,7 +410,8 @@ private struct MenuBarDockPane: View {
                         .toggleStyle(.switch).labelsHidden()
                     }
                     .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
+                    .padding(.vertical, 6)
+                    .frame(minHeight: 44)
                 }
                 SettingsDivider()
                 SettingsRow(title: "Window per provider", detail: prefs.limitWindowChoice.detail) {
@@ -330,12 +421,11 @@ private struct MenuBarDockPane: View {
                     .labelsHidden().fixedSize()
                 }
             }
-            Text(prefs.limitProviders.isEmpty
+            SettingsFootnote(prefs.limitProviders.isEmpty
                  ? "None chosen: the notch, menu bar, and Dock show whichever limit is closest to running out."
                  : "With two or more, the closed notch shows a ring split into one arc per provider, each filled to its usage.")
-                .font(NFont.caption).foregroundStyle(N.text3).padding(.top, 6)
 
-            Text("Agent Peek").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.top, 22).padding(.bottom, 8)
+            SettingsHeader("Agent Peek")
             SettingsGroup {
                 SettingsRow(title: "Floating panel", detail: "Always-on-top glance at running agents") {
                     Toggle("Floating panel", isOn: Binding(
@@ -398,7 +488,7 @@ private struct MenuBarDockPane: View {
                     Text("Hidden in Peek: \(prefs.peekHiddenAgents.sorted { $0.name < $1.name }.map(\.name).joined(separator: ", "))")
                     Button("Show all") { prefs.peekHiddenAgents = [] }.buttonStyle(.link)
                 }
-                .font(NFont.caption).foregroundStyle(N.text3).padding(.top, 6)
+                .font(NFont.caption).foregroundStyle(N.text3).padding(.top, 7).padding(.horizontal, 2)
             }
         }
     }
@@ -444,9 +534,9 @@ private struct ShortcutRow: View {
                         suggestions = GlobalHotKeys.shared.suggestions(for: action)
                         showFinder = true
                     } label: {
-                        Label("Find", systemImage: "sparkle.magnifyingglass")
+                        Label("Find", systemImage: "sparkle.magnifyingglass").labelStyle(TightLabelStyle())
                     }
-                    .controlSize(.small)
+                    .buttonStyle(SecondaryButtonStyle())
                     .help("Check this Mac for free shortcuts")
                     .popover(isPresented: $showFinder, arrowEdge: .bottom) { finder }
                 }
@@ -547,6 +637,7 @@ private struct GeneralPane: View {
 
     var body: some View {
         SettingsPage(title: "General", message: nil) {
+            SettingsHeader("Sessions", first: true)
             SettingsGroup {
                 SettingsRow(title: "Refresh automatically", detail: "Check processes and session files every 15 seconds") {
                     Toggle("Refresh automatically", isOn: binding(\.autoRefresh)).toggleStyle(.switch).labelsHidden()
@@ -563,7 +654,7 @@ private struct GeneralPane: View {
                     .fixedSize()
                 }
             }
-            Text("Power").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.top, 22).padding(.bottom, 8)
+            SettingsHeader("Power")
             SettingsGroup {
                 SettingsRow(title: "Keep this Mac awake", detail: "Stops idle sleep so long agent runs aren't interrupted. The display can still sleep.") {
                     Picker("Keep this Mac awake", selection: $prefs.keepAwake) {
@@ -573,7 +664,7 @@ private struct GeneralPane: View {
                 }
             }
             UpdateSettingsSection()
-            Text("Notifications").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.top, 22).padding(.bottom, 8)
+            SettingsHeader("Notifications")
             SettingsGroup {
                 SettingsRow(title: "When an agent needs you", detail: "A session is waiting for permission or an answer") {
                     Toggle("When an agent needs you", isOn: Binding(
@@ -645,11 +736,9 @@ private struct GeneralPane: View {
                 }
             }
             if notificationsDenied {
-                Text("Notifications are turned off for Lookout in System Settings.")
-                    .font(NFont.caption).foregroundStyle(TagColor.orange.fg).padding(.top, 8)
+                SettingsFootnote("Notifications are turned off for Lookout in System Settings.", tint: TagColor.orange.fg)
             } else if !AgentNotifier.isAvailable {
-                Text("Notifications need the packaged app. Build it with packaging/build-app.sh.")
-                    .font(NFont.caption).foregroundStyle(N.text3).padding(.top, 8)
+                SettingsFootnote("Notifications need the packaged app. Build it with packaging/build-app.sh.")
             }
         }
     }
@@ -811,15 +900,63 @@ struct SettingsPage<Content: View>: View {
                         .font(NFont.small)
                         .foregroundStyle(N.text2)
                         .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 4)
+                        .padding(.top, 5)
                 }
-                content.padding(.top, 18)
+                Rectangle().fill(N.divider).frame(height: 1).padding(.top, 16)
+                // One stack, so the pane's pieces keep their own spacing instead of each picking up the top padding.
+                VStack(alignment: .leading, spacing: 0) { content }
+                    .padding(.top, 20)
             }
-            .padding(24)
+            .padding(.horizontal, 32)
+            .padding(.top, 28)
+            .padding(.bottom, 32)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollIndicators(.never)
         .background(N.bg)
+    }
+}
+
+/// A section title above a group: the same weight as the dashboard's card titles, a little smaller.
+struct SettingsHeader: View {
+    var title: String
+    var detail: String?
+    /// The first section on a page sits right under the page header.
+    var first = false
+
+    init(_ title: String, detail: String? = nil, first: Bool = false) {
+        self.title = title
+        self.detail = detail
+        self.first = first
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.system(size: 13.5, weight: .semibold)).foregroundStyle(N.text)
+            if let detail {
+                Text(detail).font(NFont.caption).foregroundStyle(N.text2).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.top, first ? 0 : 28)
+        .padding(.bottom, 8)
+    }
+}
+
+/// The quiet line under a group.
+struct SettingsFootnote: View {
+    var text: String
+    var tint: Color = N.text3
+
+    init(_ text: String, tint: Color = N.text3) {
+        self.text = text
+        self.tint = tint
+    }
+
+    var body: some View {
+        Text(text).font(NFont.caption).foregroundStyle(tint)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.top, 7)
+            .padding(.horizontal, 2)
     }
 }
 
@@ -828,6 +965,7 @@ struct SettingsGroup<Content: View>: View {
 
     var body: some View {
         VStack(spacing: 0) { content }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(N.bgSoft, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(N.divider))
     }
@@ -846,12 +984,15 @@ struct SettingsRow<Control: View>: View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(NFont.body).foregroundStyle(N.text)
-                Text(detail).font(NFont.caption).foregroundStyle(N.text2)
+                if !detail.isEmpty {
+                    Text(detail).font(NFont.caption).foregroundStyle(N.text2).fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer(minLength: 12)
             control
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 11)
+        .padding(.vertical, 10)
+        .frame(minHeight: 52)
     }
 }

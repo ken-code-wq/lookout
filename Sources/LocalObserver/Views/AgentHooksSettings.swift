@@ -12,21 +12,16 @@ struct AgentHooksSettings: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Live hooks").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.top, 22).padding(.bottom, 4)
-            Text("With hooks, an agent tells Lookout what it's doing as it happens instead of Lookout reading it from transcripts, and Claude Code asks for permission in the notch. Lookout adds its own entries to the agent's config, keeps a backup next to it, and leaves everything else as it was.")
-                .font(NFont.caption).foregroundStyle(N.text2).fixedSize(horizontal: false, vertical: true)
-                .padding(.bottom, 8)
+            SettingsHeader("Live hooks", detail: "With hooks, an agent tells Lookout what it's doing as it happens instead of Lookout reading it from transcripts, and Claude Code asks for permission in the notch. Lookout adds its own entries to the agent's config, keeps a backup next to it, and leaves everything else as it was.")
             SettingsGroup {
                 ForEach(Array(HookAgent.allCases.enumerated()), id: \.element) { index, agent in
                     if index > 0 { SettingsDivider() }
                     row(agent)
                 }
             }
-            if let note {
-                Text(note).font(NFont.caption).foregroundStyle(N.text2).padding(.top, 6).fixedSize(horizontal: false, vertical: true)
-            }
+            if let note { SettingsFootnote(note, tint: N.text2) }
 
-            Text("Permission requests").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.top, 22).padding(.bottom, 8)
+            SettingsHeader("Permission requests")
             SettingsGroup {
                 SettingsRow(title: "Ask in Lookout", detail: "The notch opens on the request, and Peek and the menu bar list it. Off leaves every prompt in the terminal") {
                     Toggle("Ask in Lookout", isOn: $center.enabled).toggleStyle(.switch).labelsHidden()
@@ -52,8 +47,7 @@ struct AgentHooksSettings: View {
                     .labelsHidden().fixedSize()
                 }
             }
-            Text(listenerText)
-                .font(NFont.caption).foregroundStyle(N.text3).padding(.top, 6).fixedSize(horizontal: false, vertical: true)
+            SettingsFootnote(listenerText)
         }
         .onAppear(perform: reload)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in reload() }
@@ -80,17 +74,16 @@ struct AgentHooksSettings: View {
             HStack(spacing: 6) {
                 switch status {
                 case .connected:
-                    Button("Disconnect") { run(agent, connect: false) }
+                    Button("Disconnect") { run(agent, connect: false) }.buttonStyle(SecondaryButtonStyle())
                 case .outdated:
-                    Button("Disconnect") { run(agent, connect: false) }
-                    Button("Reconnect hooks") { run(agent, connect: true) }.buttonStyle(.borderedProminent).disabled(!canConnect)
+                    Button("Disconnect") { run(agent, connect: false) }.buttonStyle(SecondaryButtonStyle())
+                    Button("Reconnect hooks") { run(agent, connect: true) }.buttonStyle(PrimaryButtonStyle()).disabled(!canConnect)
                 case .notConnected:
-                    Button("Connect hooks") { run(agent, connect: true) }.buttonStyle(.borderedProminent).disabled(!canConnect)
+                    Button("Connect hooks") { run(agent, connect: true) }.buttonStyle(PrimaryButtonStyle()).disabled(!canConnect)
                 case .conflict, .unreadable:
-                    Button("Connect hooks") {}.disabled(true)
+                    Button("Connect hooks") {}.buttonStyle(SecondaryButtonStyle(tint: N.text3)).disabled(true)
                 }
             }
-            .controlSize(.small)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)

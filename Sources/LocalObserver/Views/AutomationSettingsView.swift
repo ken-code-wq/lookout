@@ -12,11 +12,13 @@ struct AutomationSettingsPane: View {
 
     var body: some View {
         SettingsPage(title: "Automation", message: "Drive Lookout from scripts, Raycast, and Shortcuts. Everything here goes through the same actions as the app's own buttons.") {
+            SettingsHeader("Command line", first: true)
             SettingsGroup {
                 SettingsRow(title: "Command-line tool",
                             detail: installedPath.map { "Installed at \(($0 as NSString).abbreviatingWithTildeInPath)" }
                                 ?? "lookout status --json, lookout open usage, lookout launcher start web") {
                     Button(installedPath == nil ? "Install command-line tool" : "Reinstall") { install() }
+                        .buttonStyle(SecondaryButtonStyle())
                         .disabled(CLIInstaller.bundledTool == nil)
                 }
             }
@@ -29,7 +31,7 @@ struct AutomationSettingsPane: View {
                     .padding(.top, 8)
             }
 
-            Text("Links").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.top, 22).padding(.bottom, 8)
+            SettingsHeader("Links")
             SettingsGroup {
                 ForEach(Array(Self.examples.enumerated()), id: \.offset) { index, example in
                     SettingsRow(title: example.url, detail: example.detail) {
@@ -37,12 +39,13 @@ struct AutomationSettingsPane: View {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(example.url, forType: .string)
                         }
+                        .buttonStyle(SecondaryButtonStyle())
                     }
                     if index < Self.examples.count - 1 { SettingsDivider() }
                 }
             }
 
-            Text("Shortcuts").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.top, 22).padding(.bottom, 8)
+            SettingsHeader("Shortcuts")
             Text(hasIntentsMetadata
                  ? "Lookout's actions are in the Shortcuts app: agents needing you, plan limit left, launchers, pages, keep-awake and the focus timer."
                  : "This build doesn't include Shortcuts actions (they need Xcode to package). Use a “Run Shell Script” action with the lookout tool, or an “Open URLs” action with a lookout:// link.")

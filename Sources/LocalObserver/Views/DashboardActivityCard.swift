@@ -1,8 +1,9 @@
 import SwiftUI
 import LocalObserverCore
 
-/// The dashboard's centrepiece: a year of agent usage as a GitHub-style grid, streaks and records under it,
-/// and the day you click broken down by agent, model, and project.
+/// A year of agent usage as a GitHub-style grid, streaks and records under it, and the day you click broken down
+/// by agent, model, and project. Collapsed by default to one line (the year's total, streak, and the last four
+/// weeks as a strip); the choice sticks.
 struct DashboardActivityCard: View {
     @ObservedObject var store: AgentStore
     @Binding var metric: AgentMetricKind
@@ -12,6 +13,7 @@ struct DashboardActivityCard: View {
     @State private var focus: AgentKind?
     @State private var selectedDay: Date?
     @State private var width: CGFloat = 1000
+    @AppStorage("LocalObserver.dashboardActivityExpanded") private var expanded = false
 
     private var wide: Bool { width > 820 }
 
@@ -23,8 +25,10 @@ struct DashboardActivityCard: View {
         let tint = focus?.tag.fg ?? N.blue
 
         VStack(alignment: .leading, spacing: 16) {
-            header
-            if agents.isEmpty {
+            header(stats: agents.isEmpty ? nil : stats, days: days, tint: tint)
+            if !expanded {
+                EmptyView()
+            } else if agents.isEmpty {
                 empty
             } else {
                 if agents.count > 1 { agentChips(agents, focus: focus) }
@@ -44,7 +48,8 @@ struct DashboardActivityCard: View {
                                    open: { openUsage($0, focus) })
             }
         }
-        .padding(18)
+        .padding(.horizontal, expanded ? 18 : 14)
+        .padding(.vertical, expanded ? 18 : 10)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(N.bg, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(N.divider))
@@ -53,19 +58,50 @@ struct DashboardActivityCard: View {
 
     // MARK: Pieces
 
-    private var header: some View {
+    private func header(stats: AgentHeatmapStats?, days: [AgentHeatmapDay], tint: Color) -> some View {
         HStack(alignment: .center, spacing: 8) {
-            Image(systemName: "square.grid.3x3.fill").font(.system(size: 12, weight: .medium)).foregroundStyle(N.text2)
-            Text("Activity").font(.system(size: 14, weight: .semibold)).foregroundStyle(N.text)
-            Text("Last 12 months").font(NFont.small).foregroundStyle(N.text3)
-            Spacer(minLength: 8)
-            Picker("Metric", selection: $metric) {
-                ForEach(AgentMetricKind.allCases) { Text($0.rawValue).tag($0) }
+            Button {
+                withAnimation(.snappy(duration: 0.22)) { expanded.toggle() }
+            } label: {
+                HStack(alignment: .center, spacing: 8) {
+                    Image(systemName: "chevron.right").font(.system(size: 9.5, weight: .semibold)).foregroundStyle(N.text3)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                        .frame(width: 12)
+                    Image(systemName: "square.grid.3x3.fill").font(.system(size: 12, weight: .medium)).foregroundStyle(N.text2)
+                    Text("Activity").font(.system(size: 14, weight: .semibold)).foregroundStyle(N.text)
+                    Text("Last 12 months").font(NFont.small).foregroundStyle(N.text3)
+                    if !expanded, let stats {
+                        Text(compactSummary(stats)).font(NFont.small).foregroundStyle(N.text2).lineLimit(1)
+                            .padding(.leading, 4)
+                    }
+                    Spacer(minLength: 8)
+                }
+                .frame(minHeight: 28)
+                .contentShape(Rectangle())
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
+            .buttonStyle(.plain)
+            .help(expanded ? "Collapse the activity grid" : "Show the year of activity, streaks, and today by agent, model, and project")
+            if expanded {
+                Picker("Metric", selection: $metric) {
+                    ForEach(AgentMetricKind.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+            } else if stats != nil {
+                RecentStrip(days: days, metric: metric, tint: tint)
+                    .help("The last four weeks")
+            }
         }
+    }
+
+    /// "277M tokens · 222 active days · 13-day streak"
+    private func compactSummary(_ stats: AgentHeatmapStats) -> String {
+        var parts: [String] = []
+        if stats.total > 0 { parts.append("\(AgentFormat.metric(stats.total, metric)) \(metric == .tokens ? "tokens" : metric.rawValue.lowercased())") }
+        parts.append("\(stats.activeDays) active day\(stats.activeDays == 1 ? "" : "s")")
+        if stats.currentStreak > 0 { parts.append("\(stats.currentStreak)-day streak") }
+        return parts.joined(separator: " · ")
     }
 
     private var empty: some View {
@@ -140,6 +176,30 @@ struct DashboardActivityCard: View {
             for day in series[agent] ?? [] { byDate[day.date, default: AgentHeatmapDay(date: day.date)].add(day) }
         }
         return byDate.values.sorted { $0.date < $1.date }
+    }
+}
+
+/// The last 28 days as a row of small squares, shaded like the grid.
+private struct RecentStrip: View {
+    var days: [AgentHeatmapDay]
+    var metric: AgentMetricKind
+    var tint: Color
+
+    var body: some View {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: .now)
+        let byDate = Dictionary(days.map { (calendar.startOfDay(for: $0.date), $0.value(for: metric) ?? 0) }, uniquingKeysWith: +)
+        let recent = (0..<28).reversed().map { offset -> Double in
+            calendar.date(byAdding: .day, value: -offset, to: today).flatMap { byDate[$0] } ?? 0
+        }
+        let peak = recent.max() ?? 0
+        HStack(spacing: 2) {
+            ForEach(Array(recent.enumerated()), id: \.offset) { _, value in
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(value > 0 && peak > 0 ? tint.opacity(0.25 + 0.75 * value / peak) : N.hover)
+                    .frame(width: 8, height: 8)
+            }
+        }
     }
 }
 

@@ -61,7 +61,7 @@ struct UpdateSettingsSection: View {
     @ObservedObject private var updater = Updater.shared
 
     var body: some View {
-        Text("Updates").font(NFont.bodyMedium).foregroundStyle(N.text).padding(.top, 22).padding(.bottom, 8)
+        SettingsHeader("Updates")
         SettingsGroup {
             if updater.isAvailable {
                 SettingsRow(title: "Check for updates automatically", detail: "Once a day, from the release feed on GitHub") {
@@ -69,11 +69,11 @@ struct UpdateSettingsSection: View {
                 }
                 SettingsDivider()
                 SettingsRow(title: "Version \(Self.version)", detail: "Updates are signed and verified before they install") {
-                    Button("Check Now") { updater.checkForUpdates() }.disabled(!updater.canCheck)
+                    Button("Check Now") { updater.checkForUpdates() }.buttonStyle(SecondaryButtonStyle()).disabled(!updater.canCheck)
                 }
             } else {
                 SettingsRow(title: "Version \(Self.version)", detail: "This build doesn't update itself. Download new versions from GitHub.") {
-                    Button("Releases") { NSWorkspace.shared.open(URL(string: "https://github.com/ken-code-wq/lookout/releases")!) }
+                    Button("Releases") { NSWorkspace.shared.open(URL(string: "https://github.com/ken-code-wq/lookout/releases")!) }.buttonStyle(SecondaryButtonStyle())
                 }
             }
         }

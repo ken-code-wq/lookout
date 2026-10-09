@@ -266,12 +266,24 @@ struct PrimaryButtonStyle: ButtonStyle {
 struct SecondaryButtonStyle: ButtonStyle {
     var tint: Color = N.text
     func makeBody(configuration: Configuration) -> some View {
-        HoverSurface(pressed: configuration.isPressed, bordered: true) {
-            configuration.label
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(tint)
-                .padding(.horizontal, 10)
-                .frame(height: 28)
+        SecondaryButtonBody(configuration: configuration, tint: tint)
+    }
+
+    /// Dims when disabled, like the stock buttons it stands in for.
+    private struct SecondaryButtonBody: View {
+        var configuration: Configuration
+        var tint: Color
+        @Environment(\.isEnabled) private var enabled
+
+        var body: some View {
+            HoverSurface(pressed: configuration.isPressed, bordered: true) {
+                configuration.label
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(tint)
+                    .padding(.horizontal, 10)
+                    .frame(height: 28)
+            }
+            .opacity(enabled ? 1 : 0.45)
         }
     }
 }

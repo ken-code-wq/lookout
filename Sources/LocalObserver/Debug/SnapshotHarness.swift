@@ -130,10 +130,7 @@ enum SnapshotHarness {
                 ("usage", AnyView(AgentUsagePage(store: store)), CGSize(width: width, height: 1400)),
                 ("limits", AnyView(AgentLimitsPage(store: store)), CGSize(width: width, height: 1100)),
                 ("inspector", AnyView(inspector(store)), CGSize(width: 360, height: 900)),
-                // The Settings scene turns the TabView into toolbar tabs; hosted offscreen it draws an empty tab
-                // strip instead (cacheDisplay doesn't capture it), so crop that strip off rather than ship a white bar.
-                ("settings", AnyView(AgentSettingsView(store: store).padding(.top, -Self.settingsTabStrip).clipped()),
-                 CGSize(width: 620, height: 560 - Self.settingsTabStrip)),
+                ("settings", AnyView(AgentSettingsView(store: store)), CGSize(width: 820, height: 600)),
                 ("menubar", AnyView(MenuBarView(state: makeState(), agentStore: store)), CGSize(width: 360, height: 1300)),
                 ("servers", AnyView(ServersPage(state: makeState(sidebar: .all))), CGSize(width: width, height: 700)),
                 ("servers-gallery", AnyView(serversGallery()), CGSize(width: width, height: 700)),
@@ -223,7 +220,7 @@ enum SnapshotHarness {
                 let shelf = await sampleShelf()
                 for dark in [false, true] {
                     let view = AnyView(HomePage(state: makeState(), agentStore: store, shelf: shelf))
-                    await render(view, size: CGSize(width: width, height: 1400), dark: dark,
+                    await render(view, size: CGSize(width: width, height: 1800), dark: dark,
                                  to: directory.appendingPathComponent("home-\(dark ? "dark" : "light").png"))
                 }
             }
@@ -518,9 +515,6 @@ enum SnapshotHarness {
         repos.selection = nil
         return ReposPage(store: repos)
     }
-
-    /// Exactly how tall the empty tab strip of an offscreen-hosted `AgentSettingsView` is.
-    private static let settingsTabStrip: CGFloat = 28
 
     /// The server list in gallery mode. `viewMode` persists itself, so the user's saved choice is put back after.
     private static func serversGallery() -> some View {
