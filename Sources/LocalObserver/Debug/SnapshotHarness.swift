@@ -128,7 +128,7 @@ enum SnapshotHarness {
                 ("usage", AnyView(AgentUsagePage(store: store)), CGSize(width: width, height: 1400)),
                 ("limits", AnyView(AgentLimitsPage(store: store)), CGSize(width: width, height: 1100)),
                 ("inspector", AnyView(inspector(store)), CGSize(width: 360, height: 900)),
-                ("settings", AnyView(AgentSettingsView(store: store)), CGSize(width: 620, height: 560)),
+                ("settings", AnyView(AgentSettingsView(store: store)), CGSize(width: 820, height: 600)),
                 ("menubar", AnyView(MenuBarView(state: makeState(), agentStore: store)), CGSize(width: 360, height: 1300)),
                 ("servers", AnyView(ServersPage(state: makeState())), CGSize(width: width, height: 700)),
                 ("server-logs", AnyView(serverLogs()), CGSize(width: 420, height: 1250)),
@@ -217,7 +217,7 @@ enum SnapshotHarness {
                 let shelf = await sampleShelf()
                 for dark in [false, true] {
                     let view = AnyView(HomePage(state: makeState(), agentStore: store, shelf: shelf))
-                    await render(view, size: CGSize(width: width, height: 1400), dark: dark,
+                    await render(view, size: CGSize(width: width, height: 1800), dark: dark,
                                  to: directory.appendingPathComponent("home-\(dark ? "dark" : "light").png"))
                 }
             }
