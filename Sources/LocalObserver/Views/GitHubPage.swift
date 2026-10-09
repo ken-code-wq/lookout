@@ -16,7 +16,7 @@ struct GitHubPage: View {
             case nil:
                 GHRepositoryList(store: store, repos: repos, agents: agents)
             case .repo(let slug, let tab):
-                GHRepoView(store: store, repos: repos, slug: slug, tab: tab)
+                GHRepoView(store: store, repos: repos, agents: agents, slug: slug, tab: tab)
             case .pull(let slug, let number):
                 GHPullView(store: store, repos: repos, agents: agents, slug: slug, number: number)
             case .issue(let slug, let number):
@@ -315,9 +315,8 @@ struct GHRepositoryRow: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
                     Text(repo.name)
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(GH.link)
-                        .underline(hover, color: GH.link)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(N.text)
                     GHVisibilityBadge(text: repo.visibilityLabel, tint: repo.isArchived ? GH.attention : N.text2)
                     if repo.isFork { Image(systemName: "tuningfork").font(.system(size: 11)).foregroundStyle(N.text2).help("Fork") }
                     if let viewer, repo.owner.caseInsensitiveCompare(viewer) != .orderedSame {
@@ -347,8 +346,9 @@ struct GHRepositoryRow: View {
             Spacer(minLength: 12)
             if let local { localBadge(local) }
         }
-        .padding(.vertical, 18)
-        .padding(.horizontal, 4)
+        .padding(.vertical, 14)
+        .padding(.horizontal, 10)
+        .background(hover ? N.hover : .clear, in: RoundedRectangle(cornerRadius: N.radius, style: .continuous))
         .contentShape(Rectangle())
         .onHover { hover = $0 }
         .onTapGesture { store.open(.repo(repo.slug, .code)) }
@@ -367,24 +367,19 @@ struct GHRepositoryRow: View {
         }
     }
 
-    /// "On this Mac · ⑂ main · 2 worktrees", with uncommitted work flagged.
+    /// "💻 ⑂ main  ⧉ 2  ✎ 2 ↓ 2" on one line: the clone here, its worktrees and unsaved work.
     private func localBadge(_ local: Repo) -> some View {
-        VStack(alignment: .trailing, spacing: 6) {
-            HStack(spacing: 5) {
-                Image(systemName: "laptopcomputer").font(.system(size: 10.5))
-                Text("On this Mac")
-            }
-            .font(.system(size: 11.5, weight: .medium))
-            .foregroundStyle(N.text2)
-            GHBranchName(name: local.refLabel, maxWidth: 180)
-            ForEach(local.worktrees.filter { !$0.isPrunable }.prefix(3)) { wt in
-                GHBranchName(name: wt.refLabel, worktree: true, maxWidth: 180)
-            }
-            if local.worktrees.count > 3 {
-                Text("+\(local.worktrees.count - 3) more worktrees").font(NFont.caption).foregroundStyle(N.text3)
+        let worktrees = local.worktrees.filter { !$0.isPrunable }
+        return HStack(spacing: 6) {
+            Image(systemName: "laptopcomputer").font(.system(size: 11)).foregroundStyle(N.text3)
+                .help("Cloned at \(local.displayPath)")
+            GHBranchName(name: local.refLabel, maxWidth: 170)
+            if !worktrees.isEmpty {
+                Tag(text: "\(worktrees.count)", color: .purple, symbol: "square.stack.3d.down.right")
+                    .help(worktrees.map(\.refLabel).joined(separator: "\n"))
             }
             RepoStateChips(changes: local.changes, unpushed: local.unpushedCount, behind: local.status.behind)
         }
-        .help(local.displayPath)
+        .padding(.top, 2)
     }
 }
