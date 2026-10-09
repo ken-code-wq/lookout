@@ -240,7 +240,7 @@ private struct RepoRow: View {
                 HStack(spacing: 9) {
                     FolderIconView(folder: repo.root, name: repo.name, size: 20)
                     Text(repo.name).font(NFont.bodyMedium).foregroundStyle(N.text).lineLimit(1).layoutPriority(1)
-                    BranchTag(branch: repo.refLabel, detached: repo.branch == nil, help: branchHelp, maxWidth: 170)
+                    BranchTag(branch: repo.refLabel, detached: repo.branch == nil, help: branchHelp, maxWidth: 280)
                     if !repo.worktrees.isEmpty {
                         Button(action: toggle) {
                             HStack(spacing: 3) {
@@ -325,7 +325,7 @@ struct WorktreeRow: View {
                 Image(systemName: "arrow.turn.down.right").font(.system(size: 10)).foregroundStyle(N.text3)
                     .padding(.leading, 12)
                 BranchTag(branch: worktree.refLabel, worktree: true, detached: worktree.branch == nil,
-                          help: worktree.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"), maxWidth: 220)
+                          help: worktree.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"), maxWidth: 320)
                 Text(worktree.owner ?? worktree.name).font(NFont.small).foregroundStyle(N.text2).lineLimit(1)
                 if worktree.isLocked { Image(systemName: "lock.fill").font(.system(size: 9.5)).foregroundStyle(N.text3).help("Locked") }
                 if worktree.isPrunable { Tag(text: "Folder missing", color: .red).help("Its folder is gone. Prune to clean up.") }
