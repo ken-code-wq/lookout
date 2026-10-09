@@ -206,10 +206,11 @@ struct GHIssueView: View {
             }
             HStack(spacing: 8) {
                 HStack(spacing: 5) {
-                    Image(systemName: issue.state.symbol).font(.system(size: 12, weight: .semibold))
-                    Text(issue.state.title).font(.system(size: 13.5, weight: .medium))
+                    Image(systemName: issue.state.symbol).font(.system(size: 11, weight: .semibold))
+                    Text(issue.state.title).font(.system(size: 13, weight: .medium))
                 }
-                .foregroundStyle(.white).padding(.horizontal, 12).frame(height: 30).background(issue.state.color, in: Capsule())
+                .foregroundStyle(issue.state.color).padding(.horizontal, 8).frame(height: 24)
+                .background(issue.state.color.opacity(0.14), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
                 Text(issue.author).fontWeight(.semibold).foregroundStyle(N.text)
                 Text("opened this issue \(RepoFormat.ago(issue.createdAt)) · \(issue.comments) comment\(issue.comments == 1 ? "" : "s")")
                     .foregroundStyle(N.text2)
@@ -227,41 +228,33 @@ struct GHIssueView: View {
             ForEach(detail.timeline) { item in
                 GHCommentBox(author: item.author, avatar: item.avatarURL, date: item.date, html: item.bodyHTML, isAuthor: item.author == issue.author)
             }
-            Rectangle().fill(GH.borderMuted).frame(height: 2)
-            HStack(alignment: .top, spacing: 14) {
-                GHAvatar(login: repos.gitHub.login ?? "you", size: 40)
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Add a comment").font(.system(size: 14, weight: .semibold)).foregroundStyle(N.text)
-                    TextEditor(text: $text).font(.system(size: 13.5)).scrollContentBackground(.hidden).padding(8).frame(minHeight: 110)
-                        .background(GH.canvasSubtle, in: RoundedRectangle(cornerRadius: GH.radius, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: GH.radius, style: .continuous).strokeBorder(GH.border))
-                    HStack(spacing: 8) {
-                        Spacer()
-                        if detail.viewerCanUpdate {
-                            if issue.state.isOpen {
-                                Menu {
-                                    Button("Close as completed") { closeWithComment(notPlanned: false) }
-                                    Button("Close as not planned") { closeWithComment(notPlanned: true) }
-                                } label: {
-                                    Label(text.isEmpty ? "Close issue" : "Close with comment", systemImage: "checkmark.circle")
-                                        .font(.system(size: 13, weight: .medium)).foregroundStyle(GH.merged)
-                                        .padding(.horizontal, 10).frame(height: 28)
-                                        .overlay(RoundedRectangle(cornerRadius: N.radius, style: .continuous).strokeBorder(N.divider))
-                                }
-                                .menuStyle(.button).buttonStyle(.plain).fixedSize()
-                            } else {
-                                Button("Reopen issue") { store.reopenIssue(slug, number) }.buttonStyle(SecondaryButtonStyle())
-                            }
+            GHComposerField(text: $text, placeholder: "Leave a comment… Markdown works.") {
+                if detail.viewerCanUpdate {
+                    if issue.state.isOpen {
+                        Menu {
+                            Button("Close as completed") { closeWithComment(notPlanned: false) }
+                            Button("Close as not planned") { closeWithComment(notPlanned: true) }
+                        } label: {
+                            Text(text.isEmpty ? "Close issue" : "Close with comment")
+                                .font(.system(size: 13)).foregroundStyle(GH.merged)
+                                .padding(.horizontal, 7).frame(height: 26)
                         }
-                        Button("Comment") { store.commentIssue(slug, number, body: text); text = "" }
-                            .buttonStyle(GHPrimaryButtonStyle())
-                            .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                            .keyboardShortcut(.return, modifiers: .command)
+                        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                    } else {
+                        Button("Reopen issue") { store.reopenIssue(slug, number) }.buttonStyle(GhostButtonStyle())
                     }
-                    .disabled(busy)
                 }
+                Button("Comment") { store.commentIssue(slug, number, body: text); text = "" }
+                    .buttonStyle(GHPrimaryButtonStyle())
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .keyboardShortcut(.return, modifiers: .command)
             }
+            .disabled(busy)
         }
+    }
+
+    private func agentPrompt(_ detail: GHIssueDetail) -> String {
+        "Fix \(detail.summary.url): \(detail.summary.title)"
     }
 
     private func closeWithComment(notPlanned: Bool) {
@@ -286,10 +279,17 @@ struct GHIssueView: View {
                 FlowLayout(spacing: 5) { ForEach(detail.summary.labels, id: \.name) { GHLabelPill(label: $0) } }
             }
             Rectangle().fill(GH.borderMuted).frame(height: 1)
+            if let local = repos.localRepo(slug: slug) {
+                Button {
+                    AgentTaskCoordinator.shared.present(AgentTaskDraft(repoRoot: local.root, prompt: agentPrompt(detail)))
+                } label: { Label("Hand to an agent", systemImage: "sparkles").frame(maxWidth: .infinity) }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .help("Start an agent on this issue in a new worktree of \(local.name)")
+            }
             Button {
-                RepoActions.copy("Fix \(detail.summary.url): \(detail.summary.title)")
-            } label: { Label("Copy as a task for an agent", systemImage: "sparkles") }
-                .buttonStyle(GhostButtonStyle(tint: N.blue))
+                RepoActions.copy(agentPrompt(detail))
+            } label: { Label("Copy as a task for an agent", systemImage: "doc.on.doc") }
+                .buttonStyle(GhostButtonStyle(tint: N.text2))
                 .help("The issue's title and link, ready to paste into an agent")
         }
     }
