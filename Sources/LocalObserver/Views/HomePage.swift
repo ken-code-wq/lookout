@@ -4,8 +4,8 @@ import LocalObserverCore
 import LocalObserverShelf
 import LocalObserverRepos
 
-/// The window's front page: what needs you, the day at a glance, the year of agent activity, then one card per
-/// pillar with a way into it.
+/// The window's front page: one prioritized list of what needs you (with a quiet recap under it), the day at a
+/// glance, agents and servers, the year of agent activity (collapsed by default), then one card per pillar.
 struct HomePage: View {
     @ObservedObject var state: AppState
     @ObservedObject var agentStore: AgentStore
@@ -32,23 +32,13 @@ struct HomePage: View {
 
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                PageHeader(symbol: SidebarItem.home.symbol, title: SidebarItem.home.title, subtitle: AnyView(summary(sessions: sessions, waiting: waiting, servers: servers)))
+                PageHeader(symbol: SidebarItem.home.symbol, title: SidebarItem.home.title, subtitle: AnyView(summary(sessions: sessions, servers: servers)))
 
-                DigestCard(agentStore: agentStore, navigate: navigate)
-
-                if !waiting.isEmpty {
-                    NeedsYouCard(sessions: waiting, open: open)
-                        .padding(.bottom, 20)
-                }
+                DigestCard(agentStore: agentStore, waiting: waiting, navigate: navigate, open: open)
 
                 OverviewStrip(sessions: sessions, servers: servers, today: agentStore.todayTotals,
                               tightest: windows.max { $0.usedPercent < $1.usedPercent }, navigate: navigate)
                     .padding(.bottom, 16)
-
-                DashboardActivityCard(store: agentStore, metric: $heatmapMetric) { day, agent in
-                    openUsage(day: day, agent: agent)
-                }
-                .padding(.bottom, 16)
 
                 pair {
                     HomeCard(title: "Agents", symbol: "sparkles", count: sessions.count,
@@ -60,6 +50,11 @@ struct HomePage: View {
                              link: "All servers", action: { navigate(.all) }) {
                         serversCard(servers)
                     }
+                }
+                .padding(.bottom, 16)
+
+                DashboardActivityCard(store: agentStore, metric: $heatmapMetric) { day, agent in
+                    openUsage(day: day, agent: agent)
                 }
                 .padding(.bottom, 16)
 
@@ -122,14 +117,9 @@ struct HomePage: View {
         }
     }
 
-    private func summary(sessions: [AgentSession], waiting: [AgentSession], servers: [ServerEntry]) -> some View {
+    private func summary(sessions: [AgentSession], servers: [ServerEntry]) -> some View {
+        // What needs you is the card right under this line; the subtitle sticks to what's running.
         HStack(spacing: 14) {
-            if waiting.isEmpty {
-                Label("Nothing needs you", systemImage: "checkmark.circle")
-            } else {
-                Label("\(waiting.count) need\(waiting.count == 1 ? "s" : "") you", systemImage: "hand.raised.fill")
-                    .foregroundStyle(TagColor.orange.fg)
-            }
             Label("\(sessions.count) agent\(sessions.count == 1 ? "" : "s") running", systemImage: "sparkles")
             Label("\(servers.count) server\(servers.count == 1 ? "" : "s") listening", systemImage: "dot.radiowaves.left.and.right")
             RelativeTimeText(date: agentStore.lastRefresh)
@@ -337,47 +327,6 @@ private struct HomeEmpty<Actions: View>: View {
 private extension HomeEmpty where Actions == EmptyView {
     init(symbol: String, text: String) {
         self.init(symbol: symbol, text: text) { EmptyView() }
-    }
-}
-
-/// Sessions waiting on you, first on the page, each with a way straight back to it.
-private struct NeedsYouCard: View {
-    var sessions: [AgentSession]
-    var open: (AgentSession) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 7) {
-                Image(systemName: "hand.raised.fill").font(.system(size: 12))
-                Text("Needs you").font(.system(size: 14, weight: .semibold))
-                Text("\(sessions.count)").font(NFont.small).monospacedDigit().opacity(0.7)
-            }
-            .foregroundStyle(TagColor.orange.fg)
-            .padding(.bottom, 4)
-            ForEach(sessions.prefix(4)) { session in
-                HStack(spacing: 10) {
-                    AgentIconView(agent: session.agent, size: 16)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(session.title).font(NFont.bodyMedium).foregroundStyle(N.text).lineLimit(1)
-                        Text([session.projectName, session.process?.host?.name].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
-                            .font(NFont.caption).foregroundStyle(N.text2).lineLimit(1)
-                    }
-                    Spacer(minLength: 8)
-                    AgentStateTag(state: session.state)
-                    Button(session.process?.host == nil ? "Show" : "Jump") { open(session) }
-                        .buttonStyle(SecondaryButtonStyle())
-                        .help(session.process?.host.map { "Switch to \($0.name)" } ?? "Show it in Sessions")
-                }
-                .frame(minHeight: 40)
-            }
-            if sessions.count > 4 {
-                Text("\(sessions.count - 4) more in Sessions").font(NFont.caption).foregroundStyle(N.text2)
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(TagColor.orange.bg.opacity(0.55), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(TagColor.orange.fg.opacity(0.25)))
     }
 }
 

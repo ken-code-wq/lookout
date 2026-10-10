@@ -31,9 +31,9 @@ struct BranchTag: View {
     var worktree = false
     var detached = false
     var help: String? = nil
-    var maxWidth: CGFloat = 200
+    var maxWidth: CGFloat = 280
 
-    init(branch: String, worktree: Bool = false, detached: Bool = false, help: String? = nil, maxWidth: CGFloat = 200) {
+    init(branch: String, worktree: Bool = false, detached: Bool = false, help: String? = nil, maxWidth: CGFloat = 280) {
         self.branch = branch
         self.worktree = worktree
         self.detached = detached
@@ -41,7 +41,7 @@ struct BranchTag: View {
         self.maxWidth = maxWidth
     }
 
-    init(_ git: GitCheckout, maxWidth: CGFloat = 200) {
+    init(_ git: GitCheckout, maxWidth: CGFloat = 280) {
         self.init(branch: git.refLabel, worktree: git.isLinkedWorktree, detached: git.isDetached,
                   help: BranchTag.describe(git), maxWidth: maxWidth)
     }
@@ -51,20 +51,26 @@ struct BranchTag: View {
         HStack(spacing: 4) {
             Image(systemName: worktree ? "square.stack.3d.down.right" : (detached ? "smallcircle.filled.circle" : "arrow.triangle.branch"))
                 .font(.system(size: 9.5, weight: .semibold))
-            Text(Self.shortened(branch, maxWidth: maxWidth))
+            Text(branch)
                 .font(NFont.monoSmall)
                 .lineLimit(1)
+                .truncationMode(.middle)
         }
         .foregroundStyle(color.fg)
         .padding(.horizontal, 6)
         .frame(height: 20)
         .background(color.bg, in: RoundedRectangle(cornerRadius: 3, style: .continuous))
-        // Hugs its text: a long branch is shortened in the middle up front rather than the tag stretching to fill.
-        .fixedSize()
+        // Hugs its text up to `maxWidth`, and only shortens in the middle (`feat/sear…te-limit`) when the row
+        // actually runs out of room, so a branch reads in full wherever the layout has space for it.
+        .modifier(CappedWidth(max: maxWidth, min: Self.minWidth))
         .help(help ?? (worktree ? "Worktree on \(branch)" : "On \(branch)"))
     }
 
+    /// Narrowest a squeezed tag gets: the glyph plus a few characters either side of the ellipsis.
+    static let minWidth: CGFloat = 72
+
     /// `feat/very-long-branch-name` → `feat/very…ch-name`, to fit roughly `maxWidth` points of 11.5pt monospace.
+    /// For callers that need a fixed string; `BranchTag` itself truncates to the width the layout gives it.
     static func shortened(_ branch: String, maxWidth: CGFloat) -> String {
         let limit = max(Int((maxWidth - 30) / 6.9), 8)
         guard branch.count > limit else { return branch }
@@ -85,7 +91,7 @@ struct BranchTag: View {
 /// A session's branch: live from its checkout while running, else what the transcript recorded.
 struct SessionBranchTag: View {
     var session: AgentSession
-    var maxWidth: CGFloat = 200
+    var maxWidth: CGFloat = 280
 
     var body: some View {
         if let git = session.checkout {
@@ -260,12 +266,24 @@ struct PrimaryButtonStyle: ButtonStyle {
 struct SecondaryButtonStyle: ButtonStyle {
     var tint: Color = N.text
     func makeBody(configuration: Configuration) -> some View {
-        HoverSurface(pressed: configuration.isPressed, bordered: true) {
-            configuration.label
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(tint)
-                .padding(.horizontal, 10)
-                .frame(height: 28)
+        SecondaryButtonBody(configuration: configuration, tint: tint)
+    }
+
+    /// Dims when disabled, like the stock buttons it stands in for.
+    private struct SecondaryButtonBody: View {
+        var configuration: Configuration
+        var tint: Color
+        @Environment(\.isEnabled) private var enabled
+
+        var body: some View {
+            HoverSurface(pressed: configuration.isPressed, bordered: true) {
+                configuration.label
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(tint)
+                    .padding(.horizontal, 10)
+                    .frame(height: 28)
+            }
+            .opacity(enabled ? 1 : 0.45)
         }
     }
 }
@@ -487,5 +505,36 @@ struct RelativeTimeText: View {
         guard let date else { return "Scanning…" }
         let s = max(0, Int(now.timeIntervalSince(date)))
         return s < 2 ? "Updated just now" : "Updated \(s)s ago"
+    }
+}
+
+/// Sizes content to its ideal width capped at `max`, and lets a parent squeeze it down to `min`, but never
+/// stretches it: a flexible frame would grow to `max`, a fixed size would never give way. Pair it with a
+/// one-line `Text` that truncates, so the text only shortens when the row is genuinely out of room.
+struct CappedWidth: ViewModifier {
+    var max: CGFloat
+    var min: CGFloat = 0
+
+    func body(content: Content) -> some View {
+        CappedWidthLayout(max: max, min: Swift.min(min, max)) { content }
+    }
+}
+
+private struct CappedWidthLayout: Layout {
+    var max: CGFloat
+    var min: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let subview = subviews.first else { return .zero }
+        let ideal = subview.sizeThatFits(.unspecified)
+        var width = Swift.min(ideal.width, max)
+        if let offered = proposal.width { width = Swift.max(Swift.min(width, offered), Swift.min(min, width)) }
+        let size = subview.sizeThatFits(ProposedViewSize(width: width, height: proposal.height ?? ideal.height))
+        return CGSize(width: width, height: size.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, anchor: .topLeading,
+                              proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
     }
 }

@@ -411,6 +411,11 @@ public enum GitHubAPI {
         gh(["pr", "checkout", "\(number)", "-R", slug], in: directory, timeout: 120)
     }
 
+    /// `gh repo clone` into `destination`, which must not exist yet. Sets up `upstream` for forks, as gh does.
+    public static func clone(_ slug: String, to destination: String) -> Result<String, Failure> {
+        gh(["repo", "clone", slug, destination], timeout: 600)
+    }
+
     public static func deleteBranch(_ slug: String, branch: String) -> Result<String, Failure> {
         let ref = branch.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? branch
         return gh(["api", "-X", "DELETE", "repos/\(slug)/git/refs/heads/\(ref)"])

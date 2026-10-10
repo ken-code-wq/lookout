@@ -2,32 +2,29 @@ import SwiftUI
 import AppKit
 import LocalObserverRepos
 
-/// GitHub's Primer colours, light and dark, for the screens that mirror github.com. Text and backgrounds stay on
-/// Lookout's own tokens; these are the accents GitHub uses to mean something (open, merged, closed, diff lines).
+/// GitHub's state colours (open, merged, closed, draft, diff lines) on top of Lookout's own surfaces. The GitHub
+/// screens speak Lookout's visual language; only the colours that carry GitHub meaning come from Primer.
 enum GH {
-    static let link = Color(light: 0x0969DA, dark: 0x4493F8)
+    static let link = N.blue
     static let open = Color(light: 0x1A7F37, dark: 0x3FB950)
     static let openButton = Color(light: 0x1F883D, dark: 0x238636)
     static let merged = Color(light: 0x8250DF, dark: 0xAB7DF8)
     static let closed = Color(light: 0xD1242F, dark: 0xF85149)
     static let draft = Color(light: 0x59636E, dark: 0x9198A1)
     static let attention = Color(light: 0x9A6700, dark: 0xD29922)
-    static let border = Color(light: 0xD1D9E0, dark: 0x3D444D)
-    static let borderMuted = Color(light: 0xD1D9E0, dark: 0x3D444D, lightAlpha: 0.7, darkAlpha: 0.7)
-    static let canvasSubtle = Color(light: 0xF6F8FA, dark: 0x151B23)
-    static let tabUnderline = Color(light: 0xFD8C73, dark: 0xF78166)
-    static let branchBg = Color(light: 0xDDF4FF, dark: 0x388BFD, lightAlpha: 1, darkAlpha: 0.15)
-    static let authorHeader = Color(light: 0xDDF4FF, dark: 0x388BFD, lightAlpha: 1, darkAlpha: 0.1)
-    static let authorBorder = Color(light: 0x54AEFF, dark: 0x388BFD, lightAlpha: 0.4, darkAlpha: 0.4)
-    static let counterBg = Color(light: 0x818B98, dark: 0x656C76, lightAlpha: 0.2, darkAlpha: 0.2)
+    static let border = N.divider
+    static let borderMuted = N.divider
+    static let canvasSubtle = N.bgSoft
+    static let tabUnderline = N.text
+    static let counterBg = TagColor.gray.bg
     static let addBg = Color(light: 0xDAFBE1, dark: 0x2EA043, lightAlpha: 1, darkAlpha: 0.15)
     static let addNumBg = Color(light: 0xACEEBB, dark: 0x3FB950, lightAlpha: 1, darkAlpha: 0.3)
     static let delBg = Color(light: 0xFFEBE9, dark: 0xF85149, lightAlpha: 1, darkAlpha: 0.15)
     static let delNumBg = Color(light: 0xFFCECB, dark: 0xF85149, lightAlpha: 1, darkAlpha: 0.3)
-    static let hunkBg = Color(light: 0xDDF4FF, dark: 0x388BFD, lightAlpha: 1, darkAlpha: 0.1)
+    static let hunkBg = N.selected.opacity(0.6)
     static let neutralBox = Color(light: 0xAFB8C1, dark: 0x3D444D)
 
-    static let radius: CGFloat = 6
+    static let radius: CGFloat = N.radius
 
     /// `#rrggbb` or `rrggbb` as a colour; GitHub's language and label colours come this way.
     static func hex(_ string: String?) -> Color? {
@@ -75,54 +72,52 @@ extension GHPullState {
     }
 }
 
-/// The filled "⇄ Open" / "Merged" / "Closed" / "Draft" pill beside a pull request title.
+/// The state beside a pull request title, in the shape of Lookout's status tags: glyph and word on a soft tint of
+/// GitHub's state colour, never colour alone.
 struct GHStateBadge: View {
     var state: GHPullState
     var large = true
 
     var body: some View {
         HStack(spacing: 5) {
-            Image(systemName: state.symbol).font(.system(size: large ? 12 : 10, weight: .semibold))
-            Text(state.title).font(.system(size: large ? 13.5 : 11.5, weight: .medium))
+            Image(systemName: state.symbol).font(.system(size: large ? 11 : 9.5, weight: .semibold))
+            Text(state.title).font(.system(size: large ? 13 : 12, weight: .medium))
         }
-        .foregroundStyle(.white)
-        .padding(.horizontal, large ? 12 : 8)
-        .frame(height: large ? 30 : 22)
-        .background(state.color, in: Capsule())
+        .foregroundStyle(state.tint)
+        .padding(.horizontal, large ? 8 : 6)
+        .frame(height: large ? 24 : 20)
+        .background(state.tint.opacity(0.14), in: RoundedRectangle(cornerRadius: large ? 5 : 3, style: .continuous))
         .fixedSize()
     }
 }
 
-/// Outlined "Public" / "Private" / "Public archive" pill beside a repository name.
+/// "Public" / "Private" / "Author" beside a name: a quiet grey tag.
 struct GHVisibilityBadge: View {
     var text: String
     var tint: Color = N.text2
 
     var body: some View {
         Text(text)
-            .font(.system(size: 11.5, weight: .medium))
+            .font(.system(size: 11.5))
             .foregroundStyle(tint)
-            .padding(.horizontal, 7)
-            .frame(height: 20)
-            .overlay(Capsule().strokeBorder(GH.border))
+            .padding(.horizontal, 6)
+            .frame(height: 18)
+            .background(TagColor.gray.bg, in: RoundedRectangle(cornerRadius: 3, style: .continuous))
             .fixedSize()
     }
 }
 
-/// Grey count bubble beside a tab title.
+/// The count beside a tab title.
 struct GHCounter: View {
     var count: Int
     var body: some View {
-        Text(count >= 1000 ? String(format: "%.1fk", Double(count) / 1000) : "\(count)")
-            .font(.system(size: 11.5, weight: .medium)).monospacedDigit()
-            .foregroundStyle(N.text)
-            .padding(.horizontal, 6)
-            .frame(minWidth: 20, minHeight: 18)
-            .background(GH.counterBg, in: Capsule())
+        Text(GHFormat.count(count))
+            .font(.system(size: 11.5)).monospacedDigit()
+            .foregroundStyle(N.text3)
     }
 }
 
-/// A branch name in GitHub's light-blue monospace pill; purple when it's checked out in a worktree here.
+/// A branch name as Lookout draws branches everywhere else; purple when it's checked out in a worktree here.
 struct GHBranchName: View {
     var name: String
     var worktree = false
@@ -130,48 +125,31 @@ struct GHBranchName: View {
     var copyable = true
 
     var body: some View {
-        HStack(spacing: 4) {
-            if worktree { Image(systemName: "square.stack.3d.down.right").font(.system(size: 9.5, weight: .semibold)) }
-            Text(BranchTag.shortened(name, maxWidth: maxWidth)).font(.system(size: 11.5, design: .monospaced))
-        }
-        .lineLimit(1)
-        .foregroundStyle(worktree ? TagColor.purple.fg : GH.link)
-        .padding(.horizontal, 6)
-        .frame(height: 20)
-        .background(worktree ? TagColor.purple.bg : GH.branchBg, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .fixedSize()
-        .help(worktree ? "\(name), checked out in a worktree on this Mac" : name)
-        .contextMenu { if copyable { Button("Copy Branch Name") { RepoActions.copy(name) } } }
+        BranchTag(branch: name, worktree: worktree,
+                  help: worktree ? "\(name), checked out in a worktree on this Mac" : name, maxWidth: maxWidth)
+            .contextMenu { if copyable { Button("Copy Branch Name") { RepoActions.copy(name) } } }
     }
 }
 
-/// A label in its GitHub colour.
+/// A label: GitHub's colour as a dot on a neutral tag, so any label colour reads in both appearances.
 struct GHLabelPill: View {
     var label: GHLabel
     var body: some View {
-        let color = GH.hex(label.color) ?? N.text3
-        Text(label.name)
-            .font(.system(size: 11.5, weight: .medium))
-            .foregroundStyle(GH.isLight(label.color) ? Color.black.opacity(0.85) : .white)
-            .padding(.horizontal, 7)
-            .frame(height: 20)
-            .background(color, in: Capsule())
-            .fixedSize()
+        HStack(spacing: 5) {
+            Circle().fill(GH.hex(label.color) ?? N.text3).frame(width: 7, height: 7)
+            Text(label.name).font(.system(size: 12)).foregroundStyle(N.text)
+        }
+        .padding(.horizontal, 7)
+        .frame(height: 20)
+        .background(TagColor.gray.bg, in: RoundedRectangle(cornerRadius: 3, style: .continuous))
+        .fixedSize()
     }
 }
 
 /// A topic on a repository's About panel.
 struct GHTopic: View {
     var name: String
-    var body: some View {
-        Text(name)
-            .font(.system(size: 11.5, weight: .medium))
-            .foregroundStyle(GH.link)
-            .padding(.horizontal, 9)
-            .frame(height: 22)
-            .background(GH.branchBg, in: Capsule())
-            .fixedSize()
-    }
+    var body: some View { Tag(text: name, color: .blue) }
 }
 
 struct GHLanguageDot: View {
@@ -272,40 +250,42 @@ struct GHTabBar<Tab: Hashable & Identifiable>: View {
 
         var body: some View {
             Button(action: action) {
-                HStack(spacing: 7) {
-                    Image(systemName: symbol).font(.system(size: 12)).foregroundStyle(N.text2)
-                    Text(title).font(.system(size: 13.5, weight: selected ? .semibold : .regular)).foregroundStyle(N.text)
+                HStack(spacing: 6) {
+                    Image(systemName: symbol).font(.system(size: 11.5))
+                    Text(title).font(.system(size: 13, weight: selected ? .medium : .regular))
                     if let count { GHCounter(count: count) }
                 }
-                .padding(.horizontal, 9)
-                .frame(height: 30)
-                .background(hover ? N.hover : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .padding(.top, 6)
-                .padding(.bottom, 8)
+                .foregroundStyle(selected ? N.text : N.text2)
+                .padding(.horizontal, 8)
+                .frame(height: 28)
+                .background(hover ? N.hover : .clear, in: RoundedRectangle(cornerRadius: N.radius, style: .continuous))
+                .padding(.top, 4)
+                .padding(.bottom, 6)
                 // An overlay takes the label's width; a Rectangle in a stack would stretch the tab.
                 .overlay(alignment: .bottom) {
-                    Rectangle().fill(selected ? GH.tabUnderline : .clear).frame(height: 2)
+                    Rectangle().fill(selected ? GH.tabUnderline : .clear).frame(height: 2).padding(.horizontal, 4)
                 }
                 .contentShape(Rectangle())
                 .fixedSize()
             }
             .buttonStyle(.plain)
             .onHover { hover = $0 }
+            .accessibilityAddTraits(selected ? .isSelected : [])
         }
     }
 }
 
-/// The green primary button GitHub uses for Merge, Comment and New.
+/// Lookout's primary button, with a tint for the few actions that carry GitHub meaning (merge is green).
 struct GHPrimaryButtonStyle: ButtonStyle {
-    var tint: Color = GH.openButton
+    var tint: Color = N.blue
     @Environment(\.isEnabled) private var enabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 13, weight: .semibold))
+            .font(.system(size: 13, weight: .medium))
             .foregroundStyle(.white)
             .padding(.horizontal, 12)
-            .frame(height: 30)
+            .frame(height: 28)
             .background(tint.opacity(enabled ? (configuration.isPressed ? 0.85 : 1) : 0.45),
                         in: RoundedRectangle(cornerRadius: GH.radius, style: .continuous))
             .contentShape(Rectangle())
@@ -361,93 +341,6 @@ enum GHFormat {
 
     static func count(_ n: Int) -> String {
         n >= 1000 ? String(format: "%.1fk", Double(n) / 1000) : "\(n)"
-    }
-}
-
-// MARK: - HTML
-
-/// Renders GitHub's HTML (README, comments, pull request bodies) with AppKit's HTML importer: selectable, links
-/// clickable, sized to its width. Images are dropped; badges and screenshots would otherwise load synchronously.
-struct GHHTMLView: NSViewRepresentable {
-    var html: String
-    @Environment(\.colorScheme) private var scheme
-
-    func makeNSView(context: Context) -> NSTextView {
-        let view = NSTextView()
-        view.isEditable = false
-        view.isSelectable = true
-        view.drawsBackground = false
-        view.textContainerInset = .zero
-        view.textContainer?.lineFragmentPadding = 0
-        view.textContainer?.widthTracksTextView = true
-        view.isVerticallyResizable = false
-        view.isHorizontallyResizable = false
-        view.linkTextAttributes = [.foregroundColor: NSColor(GH.link), .cursor: NSCursor.pointingHand]
-        return view
-    }
-
-    func updateNSView(_ view: NSTextView, context: Context) {
-        let text = GHHTML.attributed(html, dark: scheme == .dark)
-        if view.textStorage?.isEqual(to: text) != true { view.textStorage?.setAttributedString(text) }
-    }
-
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView view: NSTextView, context: Context) -> CGSize? {
-        let width = max(proposal.width ?? 600, 40)
-        guard let container = view.textContainer, let layout = view.layoutManager else { return nil }
-        container.containerSize = CGSize(width: width, height: .greatestFiniteMagnitude)
-        layout.ensureLayout(for: container)
-        let height = ceil(layout.usedRect(for: container).height)
-        view.frame.size = CGSize(width: width, height: height)
-        return CGSize(width: width, height: height)
-    }
-}
-
-@MainActor
-enum GHHTML {
-    private static var cache: [String: NSAttributedString] = [:]
-
-    static func attributed(_ html: String, dark: Bool) -> NSAttributedString {
-        let key = "\(dark ? 1 : 0)\(html.hashValue)"
-        if let hit = cache[key] { return hit }
-        let text = dark ? "#e6edf3" : "#1f2328"
-        let muted = dark ? "#9198a1" : "#59636e"
-        let code = dark ? "rgba(101,108,118,0.2)" : "rgba(129,139,152,0.12)"
-        let link = dark ? "#4493f8" : "#0969da"
-        let border = dark ? "#3d444d" : "#d1d9e0"
-        let css = """
-        <style>
-        body { font-family: -apple-system, 'SF Pro Text'; font-size: 13.5px; line-height: 1.5; color: \(text); }
-        a { color: \(link); text-decoration: none; }
-        h1 { font-size: 24px; font-weight: 600; } h2 { font-size: 19px; font-weight: 600; } h3 { font-size: 16px; font-weight: 600; }
-        h4, h5, h6 { font-size: 13.5px; font-weight: 600; }
-        code, pre, tt { font-family: 'SF Mono', Menlo, monospace; font-size: 12px; background-color: \(code); }
-        pre { padding: 10px; margin: 0 0 12px 0; }
-        ul, ol { margin-bottom: 12px; }
-        blockquote { color: \(muted); border-left: 3px solid \(border); padding-left: 10px; margin-left: 0; }
-        table { border-collapse: collapse; } td, th { border: 1px solid \(border); padding: 4px 10px; }
-        </style>
-        """
-        let cleaned = strip(html)
-        let data = Data((css + "<body>" + cleaned + "</body>").utf8)
-        let result = (try? NSMutableAttributedString(
-            data: data,
-            options: [.documentType: NSAttributedString.DocumentType.html, .characterEncoding: String.Encoding.utf8.rawValue],
-            documentAttributes: nil)) ?? NSMutableAttributedString(string: cleaned)
-        // The importer leaves a trailing newline; trim it so boxes don't end with a blank line.
-        while result.string.hasSuffix("\n") { result.deleteCharacters(in: NSRange(location: result.length - 1, length: 1)) }
-        if cache.count > 300 { cache.removeAll() }
-        cache[key] = result
-        return result
-    }
-
-    /// Drops images and SVG (alt text kept), and GitHub's anchor-link icons inside headings.
-    static func strip(_ html: String) -> String {
-        var s = html
-        s = s.replacingOccurrences(of: #"<svg[\s\S]*?</svg>"#, with: "", options: .regularExpression)
-        s = s.replacingOccurrences(of: #"<img[^>]*alt="([^"]*)"[^>]*>"#, with: "$1", options: .regularExpression)
-        s = s.replacingOccurrences(of: #"<img[^>]*>"#, with: "", options: .regularExpression)
-        s = s.replacingOccurrences(of: #"<picture[^>]*>|</picture>|<source[^>]*>"#, with: "", options: .regularExpression)
-        return s
     }
 }
 

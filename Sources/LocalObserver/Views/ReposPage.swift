@@ -5,6 +5,9 @@ import LocalObserverRepos
 /// Every repository under your code folders: branch, uncommitted and unpushed work, worktrees, and open pull requests.
 struct ReposPage: View {
     @ObservedObject var store: RepoStore
+    var github: GitHubStore = .shared
+    /// Opens a repository on the GitHub page, for the ones that only exist there.
+    var openOnGitHub: (String) -> Void = { _ in }
     @State private var width: CGFloat = 900
     @State private var expanded: Set<String> = []
     @FocusState private var focused: Bool
@@ -36,6 +39,9 @@ struct ReposPage: View {
                     }
                     .padding(.top, 2)
                 }
+                if store.view == .all, store.settings.gitHubEnabled {
+                    ReposGitHubSection(store: store, github: github, openOnGitHub: openOnGitHub)
+                }
             }
             .padding(.horizontal, horizontalPadding)
             .padding(.bottom, 80)
@@ -58,6 +64,8 @@ struct ReposPage: View {
             store.selection = nil; return .handled
         }
         .onTapGesture { store.selection = nil }
+        .onAppear { if store.settings.gitHubEnabled, store.gitHub.login != nil { github.loadRepositories() } }
+        .onChange(of: store.gitHub.login) { _, login in if login != nil { github.loadRepositories() } }
     }
 
     private var horizontalPadding: CGFloat { width > 1100 ? 64 : (width > 800 ? 44 : 24) }
@@ -240,7 +248,7 @@ private struct RepoRow: View {
                 HStack(spacing: 9) {
                     FolderIconView(folder: repo.root, name: repo.name, size: 20)
                     Text(repo.name).font(NFont.bodyMedium).foregroundStyle(N.text).lineLimit(1).layoutPriority(1)
-                    BranchTag(branch: repo.refLabel, detached: repo.branch == nil, help: branchHelp, maxWidth: 170)
+                    BranchTag(branch: repo.refLabel, detached: repo.branch == nil, help: branchHelp, maxWidth: 280)
                     if !repo.worktrees.isEmpty {
                         Button(action: toggle) {
                             HStack(spacing: 3) {
@@ -325,7 +333,7 @@ struct WorktreeRow: View {
                 Image(systemName: "arrow.turn.down.right").font(.system(size: 10)).foregroundStyle(N.text3)
                     .padding(.leading, 12)
                 BranchTag(branch: worktree.refLabel, worktree: true, detached: worktree.branch == nil,
-                          help: worktree.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"), maxWidth: 220)
+                          help: worktree.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"), maxWidth: 320)
                 Text(worktree.owner ?? worktree.name).font(NFont.small).foregroundStyle(N.text2).lineLimit(1)
                 if worktree.isLocked { Image(systemName: "lock.fill").font(.system(size: 9.5)).foregroundStyle(N.text3).help("Locked") }
                 if worktree.isPrunable { Tag(text: "Folder missing", color: .red).help("Its folder is gone. Prune to clean up.") }

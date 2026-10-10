@@ -1,10 +1,12 @@
 import SwiftUI
 import LocalObserverRepos
+import LocalObserverCore
 
 /// One repository, GitHub-style: header, tab strip, then Code / Pull requests / Branches / Commits.
 struct GHRepoView: View {
     @ObservedObject var store: GitHubStore
     @ObservedObject var repos: RepoStore
+    var agents: AgentStore
     var slug: String
     var tab: GHRepoTab
 
@@ -104,7 +106,7 @@ struct GHRepoView: View {
             GHErrorBox(message: error) { store.loadDetail(slug, force: true) }
         }
         switch tab {
-        case .code: GHCodeTab(store: store, repos: repos, slug: slug, width: width)
+        case .code: GHCodeTab(store: store, repos: repos, agents: agents, slug: slug, width: width)
         case .issues: GHIssuesTab(store: store, slug: slug)
         case .pulls: GHPullsTab(store: store, slug: slug)
         case .branches: GHBranchesTab(store: store, repos: repos, slug: slug)
@@ -118,6 +120,7 @@ struct GHRepoView: View {
 struct GHCodeTab: View {
     @ObservedObject var store: GitHubStore
     @ObservedObject var repos: RepoStore
+    var agents: AgentStore
     var slug: String
     var width: CGFloat
 
@@ -141,6 +144,7 @@ struct GHCodeTab: View {
 
     private var main: some View {
         VStack(alignment: .leading, spacing: 16) {
+            if let local { GHLocalStrip(repos: repos, agents: agents, local: local).padding(.bottom, 8) }
             toolbar
             if let detail {
                 commitsBox(detail)
@@ -197,14 +201,15 @@ struct GHCodeTab: View {
                 Button("Download ZIP") { ProcessManager.openURL("https://github.com/\(slug)/archive/refs/heads/\(store.defaultBranch(slug)).zip") }
             } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: "chevron.left.forwardslash.chevron.right").font(.system(size: 11, weight: .bold))
-                    Text("Code").font(.system(size: 13, weight: .semibold))
-                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold))
+                    Image(systemName: "arrow.down.circle").font(.system(size: 11.5))
+                    Text("Clone").font(.system(size: 13, weight: .medium))
+                    Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(N.text2)
                 }
-                .foregroundStyle(.white)
-                .padding(.horizontal, 12)
+                .foregroundStyle(N.text)
+                .padding(.horizontal, 10)
                 .frame(height: 28)
-                .background(GH.openButton, in: RoundedRectangle(cornerRadius: GH.radius, style: .continuous))
+                .background(N.bg, in: RoundedRectangle(cornerRadius: GH.radius, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: GH.radius, style: .continuous).strokeBorder(GH.border))
             }
             .menuStyle(.button)
         .buttonStyle(.plain)
@@ -320,10 +325,6 @@ struct GHCodeTab: View {
                 GHLanguageBar(languages: languages, total: total)
             }
 
-            if let local {
-                divider
-                GHLocalPanel(repos: repos, local: local)
-            }
         }
     }
 
@@ -370,52 +371,102 @@ struct GHLanguageBar: View {
     }
 }
 
-/// The clone on this Mac: where it is, what's checked out, every worktree's branch, and unsaved work.
-struct GHLocalPanel: View {
+/// The clone on this Mac, first thing on a repository's page: every checkout (the main one and each worktree) with
+/// its branch, unsaved work and the agents working in it, and the actions to get into it.
+struct GHLocalStrip: View {
     @ObservedObject var repos: RepoStore
+    @ObservedObject var agents: AgentStore
     var local: Repo
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "laptopcomputer").font(.system(size: 12))
-                Text("On this Mac").font(.system(size: 15, weight: .semibold))
+        let live = liveSessions
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "laptopcomputer").font(.system(size: 12)).foregroundStyle(N.text2)
+                Text("On this Mac").font(.system(size: 13, weight: .semibold)).foregroundStyle(N.text)
+                Text(local.displayPath).font(NFont.monoSmall).foregroundStyle(N.text3).lineLimit(1).truncationMode(.middle)
+                    .textSelection(.enabled)
+                Spacer(minLength: 8)
+                HStack(spacing: 6) {
+                    Button("Editor") { RepoActions.openEditor(local.root) }
+                    Button("Terminal") { RepoActions.openTerminal(local.root) }
+                    Button("Fetch") { repos.fetch(local) }.disabled(repos.busy.contains(local.root))
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .fixedSize()
             }
-            .foregroundStyle(N.text)
-            Text(local.displayPath).font(NFont.monoSmall).foregroundStyle(N.text2).lineLimit(1).truncationMode(.middle)
-                .textSelection(.enabled)
-            HStack(spacing: 6) {
-                GHBranchName(name: local.refLabel, maxWidth: 200)
-                RepoStateChips(changes: local.changes, unpushed: local.unpushedCount, behind: local.status.behind, stashes: local.stashes)
+            .padding(.horizontal, 14)
+            .frame(height: 46)
+            Rectangle().fill(N.divider).frame(height: 1)
+            checkout(branch: local.refLabel, worktree: false, owner: nil, path: local.root,
+                     changes: local.changes, ahead: local.unpushedCount, behind: local.status.behind, stashes: local.stashes,
+                     sessions: live.filter { $0.path == local.root }.map(\.session))
+            ForEach(local.worktrees) { wt in
+                Rectangle().fill(N.divider).frame(height: 1).padding(.leading, 14)
+                checkout(branch: wt.refLabel, worktree: true, owner: wt.owner, path: wt.path,
+                         changes: wt.changes, ahead: wt.ahead, behind: wt.behind, stashes: 0,
+                         sessions: live.filter { $0.path == wt.path }.map(\.session))
             }
-            if !local.worktrees.isEmpty {
-                Text("Worktrees").font(.system(size: 12, weight: .semibold)).foregroundStyle(N.text2).padding(.top, 4)
-                ForEach(local.worktrees) { wt in
-                    HStack(spacing: 6) {
-                        GHBranchName(name: wt.refLabel, worktree: true, maxWidth: 170)
-                        if let owner = wt.owner { Text(owner).font(NFont.caption).foregroundStyle(N.text3) }
-                        Spacer(minLength: 4)
-                        if let changes = wt.changes, !changes.isClean {
-                            Text("\(changes.total)").font(.system(size: 11, weight: .medium)).foregroundStyle(TagColor.orange.fg)
-                                .help(changes.summary)
-                        }
-                        if wt.ahead > 0 {
-                            Text("↑\(wt.ahead)").font(.system(size: 11, weight: .medium)).foregroundStyle(TagColor.blue.fg)
-                        }
+        }
+        .background(N.bgSoft, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(N.divider))
+    }
+
+    /// Running sessions in this repository, keyed by the checkout (main folder or worktree) they work in.
+    private var liveSessions: [(path: String, session: AgentSession)] {
+        let roots = [local.root] + local.worktrees.map(\.path)
+        return agents.snapshot.processes.compactMap { session in
+            let path = session.checkout?.root ?? session.projectPath
+            guard let root = roots.filter({ path == $0 || path.hasPrefix($0 + "/") }).max(by: { $0.count < $1.count }) else { return nil }
+            return (root, session)
+        }
+    }
+
+    private func checkout(branch: String, worktree: Bool, owner: String?, path: String, changes: RepoChanges?,
+                          ahead: Int, behind: Int, stashes: Int, sessions: [AgentSession]) -> some View {
+        GHCheckoutRow {
+            HStack(spacing: 10) {
+                GHBranchName(name: branch, worktree: worktree, maxWidth: 240)
+                if let owner { Text(owner).font(NFont.caption).foregroundStyle(N.text3).lineLimit(1) }
+                if let changes, !changes.isClean || ahead > 0 || behind > 0 || stashes > 0 {
+                    RepoStateChips(changes: changes, unpushed: ahead, behind: behind, stashes: stashes)
+                } else if changes != nil {
+                    HStack(spacing: 3) {
+                        Image(systemName: "checkmark").font(.system(size: 9, weight: .semibold))
+                        Text("Clean")
                     }
-                    .contentShape(Rectangle())
-                    .onTapGesture { RepoActions.openEditor(wt.path) }
-                    .help("Open \(wt.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) in your editor")
+                    .font(NFont.caption).foregroundStyle(N.text3)
+                }
+                Spacer(minLength: 8)
+                ForEach(sessions.prefix(2)) { session in
+                    HStack(spacing: 6) {
+                        AgentIconView(agent: session.agent, size: 14)
+                        Text(session.title).font(NFont.caption).foregroundStyle(N.text2).lineLimit(1).frame(maxWidth: 180, alignment: .leading)
+                        AgentStateTag(state: session.state)
+                    }
+                    .help("\(session.agent.name) is working here")
                 }
             }
-            HStack(spacing: 6) {
-                Button("Editor") { RepoActions.openEditor(local.root) }
-                Button("Terminal") { RepoActions.openTerminal(local.root) }
-                Button("Fetch") { repos.fetch(local) }.disabled(repos.busy.contains(local.root))
-            }
-            .buttonStyle(SecondaryButtonStyle())
-            .padding(.top, 4)
+        } action: {
+            RepoActions.openEditor(path)
         }
+        .help("Open \(path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) in your editor")
+    }
+}
+
+private struct GHCheckoutRow<Content: View>: View {
+    @ViewBuilder var content: Content
+    var action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        content
+            .padding(.horizontal, 14)
+            .frame(minHeight: 40)
+            .background(hover ? N.hover : .clear)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: action)
+            .onHover { hover = $0 }
     }
 }
 

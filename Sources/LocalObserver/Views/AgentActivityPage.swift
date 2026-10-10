@@ -128,21 +128,25 @@ struct AgentActivityPage: View {
             }
             .padding(.vertical, -24)
         } else {
-            VStack(alignment: .leading, spacing: 26) {
-                ForEach(groups, id: \.title) { group in
-                    VStack(alignment: .leading, spacing: 0) {
-                        SectionTitle(group.title, count: group.sessions.count)
-                        VStack(spacing: 1) {
-                            ForEach(group.sessions) { session in
-                                RunningSessionRow(
-                                    session: session,
-                                    columns: columns,
-                                    selected: store.selectedSessionID == session.id
-                                ) { select(session) }
+            VStack(alignment: .leading, spacing: 0) {
+                RunningHeader(columns: columns)
+                VStack(alignment: .leading, spacing: 26) {
+                    ForEach(groups, id: \.title) { group in
+                        VStack(alignment: .leading, spacing: 0) {
+                            SectionTitle(group.title, count: group.sessions.count)
+                            VStack(spacing: 1) {
+                                ForEach(group.sessions) { session in
+                                    RunningSessionRow(
+                                        session: session,
+                                        columns: columns,
+                                        selected: store.selectedSessionID == session.id
+                                    ) { select(session) }
+                                }
                             }
                         }
                     }
                 }
+                .padding(.top, 8)
             }
         }
     }
@@ -354,11 +358,7 @@ private struct RunningSessionRow: View {
                             .font(NFont.bodyMedium)
                             .foregroundStyle(N.text)
                             .lineLimit(1)
-                            .layoutPriority(1)
-                        SessionBranchTag(session: session, maxWidth: 170)
-                        SessionPullChip(session: session)
-                        SessionDiffChip(session: session)
-                        LaunchedTaskTag(session: session)
+                        SessionRowChips(session: session)
                     }
                     Text(subtitle)
                         .font(NFont.caption)
@@ -368,7 +368,9 @@ private struct RunningSessionRow: View {
                 }
             }
             .padding(.trailing, 12)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            // Never wider than what's left after the fixed columns, so every group's columns line up.
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            .clipped()
 
             AgentStateTag(state: session.state)
                 .frame(width: columns.state, alignment: .leading)
@@ -422,6 +424,63 @@ private struct RunningSessionRow: View {
         if let owner = session.checkout?.worktreeOwner { parts.append("\(owner) worktree") }
         if !session.projectPath.isEmpty { parts.append((session.projectPath as NSString).abbreviatingWithTildeInPath) }
         return parts.joined(separator: "  ·  ")
+    }
+}
+
+/// Branch, PR, diffstat, and "From Lookout" after a live session's title. When the title cell runs short they
+/// give way from the end, and the branch shortens in the middle last, so the title keeps a fair share.
+private struct SessionRowChips: View {
+    var session: AgentSession
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            chips(pull: true, diff: true, launched: true)
+            chips(pull: true, diff: true, launched: false)
+            chips(pull: true, diff: false, launched: false)
+            chips(pull: false, diff: false, launched: false)
+        }
+    }
+
+    private func chips(pull: Bool, diff: Bool, launched: Bool) -> some View {
+        HStack(spacing: 6) {
+            SessionBranchTag(session: session)
+            if pull { SessionPullChip(session: session) }
+            if diff { SessionDiffChip(session: session) }
+            if launched { LaunchedTaskTag(session: session) }
+        }
+    }
+}
+
+/// Column labels over the live sessions, matching the recent-sessions table below.
+private struct RunningHeader: View {
+    var columns: ActivityColumns
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ActivityHeaderCell(symbol: "textformat", title: "Session").frame(maxWidth: .infinity, alignment: .leading)
+            ActivityHeaderCell(symbol: "circle.dashed", title: "Status").frame(width: columns.state, alignment: .leading)
+            if columns.showModel { ActivityHeaderCell(symbol: "cpu", title: "Model").frame(width: columns.model, alignment: .leading) }
+            if columns.showContext { ActivityHeaderCell(symbol: "number", title: "Context").frame(width: columns.context, alignment: .leading) }
+            if columns.showHost { ActivityHeaderCell(symbol: "macwindow", title: "Host").frame(width: columns.host, alignment: .leading) }
+            ActivityHeaderCell(symbol: "clock", title: "Running").frame(width: columns.time, alignment: .trailing)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 32)
+        .overlay(alignment: .bottom) { Rectangle().fill(N.divider).frame(height: 1) }
+    }
+}
+
+private struct ActivityHeaderCell: View {
+    var symbol: String
+    var title: String
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: symbol).font(.system(size: 10.5))
+            Text(title).font(NFont.small)
+        }
+        .foregroundStyle(N.text2)
+        .lineLimit(1)
     }
 }
 
@@ -493,11 +552,7 @@ private struct RecentHeader: View {
     }
 
     private func cell(_ symbol: String, _ title: String) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: symbol).font(.system(size: 10.5))
-            Text(title).font(NFont.small)
-        }
-        .foregroundStyle(N.text2)
+        ActivityHeaderCell(symbol: symbol, title: title)
     }
 }
 

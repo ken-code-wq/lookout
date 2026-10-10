@@ -20,9 +20,11 @@ enum SnapshotHarness {
 
     private static var windows: [NSWindow] = []
 
-    /// A server list for a render: this Mac's, or the fake one in demo mode.
-    private static func makeState() -> AppState {
+    /// A server list for a render: this Mac's, or the fake one in demo mode. Pages that title themselves from the
+    /// sidebar (the server lists) need the item the user would have clicked, not the default Dashboard.
+    private static func makeState(sidebar: SidebarItem? = nil) -> AppState {
         let state = AppState()
+        if let sidebar { state.sidebar = sidebar }
         if SnapshotDemo.isEnabled { SnapshotDemo.loadServers(into: state) }
         return state
     }
@@ -123,14 +125,20 @@ enum SnapshotHarness {
             try? await Task.sleep(for: .seconds(1))
             if let first = store.runningSessions.first { store.selectedSessionID = first.id }
 
+            if ProcessInfo.processInfo.environment["LOCAL_OBSERVER_SNAPSHOT_SETTINGS_WINDOW"] == "1" {
+                await settingsWindow(store: store, to: directory)
+                exit(0)
+            }
+
             let pages: [(String, AnyView, CGSize)] = [
                 ("activity", AnyView(AgentActivityPage(store: store)), CGSize(width: width, height: 1300)),
                 ("usage", AnyView(AgentUsagePage(store: store)), CGSize(width: width, height: 1400)),
                 ("limits", AnyView(AgentLimitsPage(store: store)), CGSize(width: width, height: 1100)),
                 ("inspector", AnyView(inspector(store)), CGSize(width: 360, height: 900)),
-                ("settings", AnyView(AgentSettingsView(store: store)), CGSize(width: 620, height: 560)),
+                ("settings", AnyView(AgentSettingsView(store: store)), CGSize(width: 820, height: 600)),
                 ("menubar", AnyView(MenuBarView(state: makeState(), agentStore: store)), CGSize(width: 360, height: 1300)),
-                ("servers", AnyView(ServersPage(state: makeState())), CGSize(width: width, height: 700)),
+                ("servers", AnyView(ServersPage(state: makeState(sidebar: .all))), CGSize(width: width, height: 700)),
+                ("servers-gallery", AnyView(serversGallery()), CGSize(width: width, height: 700)),
                 ("server-logs", AnyView(serverLogs()), CGSize(width: 420, height: 1250)),
                 ("launchers", AnyView(LaunchersPage(state: makeState())), CGSize(width: width, height: 500)),
                 ("server-logs-sheet", AnyView(serverLogsSheet()), CGSize(width: 780, height: 900)),
@@ -150,14 +158,14 @@ enum SnapshotHarness {
                 ("weekly-card", AnyView(weeklyCard(store)), CGSize(width: WeeklyReportCard.width, height: 760)),
                 ("settings-disk", AnyView(DiskSettingsPane()), CGSize(width: 620, height: 560)),
                 ("settings-hooks", AnyView(SettingsPage(title: "Agents") { AgentHooksSettings() }), CGSize(width: 620, height: 620)),
-                ("gh-issues", AnyView(GHRepoView(store: GitHubStore.shared, repos: RepoStore.shared, slug: "acme/aurora-api", tab: .issues)), CGSize(width: width, height: 700)),
+                ("gh-issues", AnyView(GHRepoView(store: GitHubStore.shared, repos: RepoStore.shared, agents: store, slug: "acme/aurora-api", tab: .issues)), CGSize(width: width, height: 700)),
                 ("gh-issue", AnyView(GHIssueView(store: GitHubStore.shared, slug: "acme/aurora-api", number: 231)), CGSize(width: width, height: 900)),
                 ("inbox", AnyView(InboxPage(store: GitHubStore.shared, repos: RepoStore.shared)), CGSize(width: width, height: 700)),
                 ("gh-repos", AnyView(GitHubPage(store: GitHubStore.shared, repos: RepoStore.shared, agents: store)), CGSize(width: width, height: 1100)),
-                ("gh-code", AnyView(GHRepoView(store: GitHubStore.shared, repos: RepoStore.shared, slug: "acme/aurora-api", tab: .code)), CGSize(width: width, height: 1100)),
-                ("gh-branches", AnyView(GHRepoView(store: GitHubStore.shared, repos: RepoStore.shared, slug: "acme/aurora-api", tab: .branches)), CGSize(width: width, height: 900)),
-                ("gh-pulls", AnyView(GHRepoView(store: GitHubStore.shared, repos: RepoStore.shared, slug: "acme/aurora-api", tab: .pulls)), CGSize(width: width, height: 700)),
-                ("gh-commits", AnyView(GHRepoView(store: GitHubStore.shared, repos: RepoStore.shared, slug: "acme/aurora-api", tab: .commits)), CGSize(width: width, height: 900)),
+                ("gh-code", AnyView(GHRepoView(store: GitHubStore.shared, repos: RepoStore.shared, agents: store, slug: "acme/aurora-api", tab: .code)), CGSize(width: width, height: 1100)),
+                ("gh-branches", AnyView(GHRepoView(store: GitHubStore.shared, repos: RepoStore.shared, agents: store, slug: "acme/aurora-api", tab: .branches)), CGSize(width: width, height: 900)),
+                ("gh-pulls", AnyView(GHRepoView(store: GitHubStore.shared, repos: RepoStore.shared, agents: store, slug: "acme/aurora-api", tab: .pulls)), CGSize(width: width, height: 700)),
+                ("gh-commits", AnyView(GHRepoView(store: GitHubStore.shared, repos: RepoStore.shared, agents: store, slug: "acme/aurora-api", tab: .commits)), CGSize(width: width, height: 900)),
                 ("gh-pull", AnyView(GHPullView(store: GitHubStore.shared, repos: RepoStore.shared, agents: store, slug: "acme/aurora-api", number: 214)), CGSize(width: width, height: 1700)),
                 ("gh-files", AnyView(GHPullView(store: GitHubStore.shared, repos: RepoStore.shared, agents: store, slug: "acme/aurora-api", number: 214, initialTab: .files)), CGSize(width: width, height: 1000)),
             ]
@@ -217,7 +225,7 @@ enum SnapshotHarness {
                 let shelf = await sampleShelf()
                 for dark in [false, true] {
                     let view = AnyView(HomePage(state: makeState(), agentStore: store, shelf: shelf))
-                    await render(view, size: CGSize(width: width, height: 1400), dark: dark,
+                    await render(view, size: CGSize(width: width, height: 1800), dark: dark,
                                  to: directory.appendingPathComponent("home-\(dark ? "dark" : "light").png"))
                 }
             }
@@ -513,6 +521,16 @@ enum SnapshotHarness {
         return ReposPage(store: repos)
     }
 
+    /// The server list in gallery mode. `viewMode` persists itself, so the user's saved choice is put back after.
+    private static func serversGallery() -> some View {
+        let key = "LocalObserver.viewMode"
+        let saved = UserDefaults.standard.object(forKey: key)
+        let state = makeState(sidebar: .all)
+        state.viewMode = .gallery
+        if let saved { UserDefaults.standard.set(saved, forKey: key) } else { UserDefaults.standard.removeObject(forKey: key) }
+        return ServersPage(state: state)
+    }
+
     /// The server inspector for the first server, which in demo mode runs from a launcher and has logs.
     @ViewBuilder private static func serverLogs() -> some View {
         let state = makeState()
@@ -536,8 +554,38 @@ enum SnapshotHarness {
         }
     }
 
+    /// `LOCAL_OBSERVER_SNAPSHOT_SETTINGS_WINDOW=1`: the Settings view in a real titled window on screen, sized by its
+    /// content as the Settings scene sizes it, captured with its title bar by `screencapture` (needs Screen Recording).
+    private static func settingsWindow(store: AgentStore, to directory: URL) async {
+        NSApp.setActivationPolicy(.regular)
+        for dark in [false, true] {
+            let controller = NSHostingController(rootView: AgentSettingsView(store: store))
+            controller.sizingOptions = .preferredContentSize
+            let window = NSWindow(contentViewController: controller)
+            window.styleMask = [.titled, .closable, .miniaturizable]
+            window.setContentSize(controller.view.fittingSize)
+            // A bare NSHostingController doesn't pick up `.navigationTitle`; the Settings scene does.
+            window.title = SettingsPane.agents.title
+            window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+            window.center()
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate()
+            windows.append(window)
+            try? await Task.sleep(for: .seconds(2))
+            let url = directory.appendingPathComponent("settings-window-\(dark ? "dark" : "light").png")
+            let capture = Process()
+            capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+            capture.arguments = ["-x", "-o", "-l", "\(window.windowNumber)", url.path]
+            try? capture.run()
+            capture.waitUntilExit()
+            window.orderOut(nil)
+        }
+    }
+
     private static func render(_ view: AnyView, size: CGSize, dark: Bool, to url: URL) async {
-        let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height).background(N.bg))
+        // Top-aligned like a real window or menu: a view shorter than the canvas (the menu bar, which sizes to its
+        // content) hangs from the top edge instead of floating in the middle of empty space.
+        let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height, alignment: .top).background(N.bg))
         host.frame = CGRect(origin: .zero, size: size)
         let window = NSWindow(
             contentRect: CGRect(origin: CGPoint(x: -30_000, y: -30_000), size: size),
