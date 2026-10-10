@@ -72,11 +72,21 @@ struct DigestCard: View {
     var actions: [Action] {
         var actions: [Action] = []
 
+        // A failing pull request whose branch an agent is waiting on is one problem, not two: it folds into the
+        // agent's row, since answering the agent is how the checks get fixed.
+        let failingPulls = repos.failingPulls
+        func pull(for session: AgentSession) -> PullRequest? {
+            guard !session.branch.isEmpty else { return nil }
+            return failingPulls.first { $0.branch == session.branch && $0.repoName == session.projectName }
+        }
+        let folded = Set(waiting.compactMap { pull(for: $0)?.url })
+
         // 1. Agents waiting on you: the only things that are stuck until you act.
         actions += capped(waiting.map { session in
             let host = session.process?.host
+            let checks = pull(for: session).map { "checks failing on #\($0.number)" }
             return Action(id: "agent-\(session.id)", icon: .agent(session.agent), title: session.title,
-                          detail: [session.agent.shortName, session.projectName, host?.name].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "),
+                          detail: [session.agent.shortName, session.projectName, host?.name, checks].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "),
                           badge: .state(session.state), verb: host == nil ? "Show" : "Jump",
                           help: host.map { "Switch to \($0.name)" } ?? "Show it in Sessions",
                           perform: { open(session) },
@@ -84,11 +94,10 @@ struct DigestCard: View {
         }, kind: "agents", noun: "waiting", page: .agentActivity)
 
         // 2. Failing checks: your pull requests first, then workflow runs that aren't one of them.
-        let failingPulls = repos.failingPulls
         let failingRuns = ci.failedRuns.filter { run in
             !failingPulls.contains { $0.branch == run.branch && run.repo.hasSuffix($0.repoName) }
         }
-        let failing: [Action] = failingPulls.map { pull in
+        let failing: [Action] = failingPulls.filter { !folded.contains($0.url) }.map { pull in
             Action(id: "ci-pr-\(pull.url)", icon: .symbol("arrow.triangle.pull", N.text2), title: pull.title,
                    detail: "\(pull.repoName) #\(pull.number) · \(pull.branch)",
                    badge: .tag("Checks failed", .red, "xmark"), verb: "Open", help: "Open the checks on GitHub",

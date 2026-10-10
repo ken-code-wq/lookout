@@ -125,6 +125,11 @@ enum SnapshotHarness {
             try? await Task.sleep(for: .seconds(1))
             if let first = store.runningSessions.first { store.selectedSessionID = first.id }
 
+            if ProcessInfo.processInfo.environment["LOCAL_OBSERVER_SNAPSHOT_SETTINGS_WINDOW"] == "1" {
+                await settingsWindow(store: store, to: directory)
+                exit(0)
+            }
+
             let pages: [(String, AnyView, CGSize)] = [
                 ("activity", AnyView(AgentActivityPage(store: store)), CGSize(width: width, height: 1300)),
                 ("usage", AnyView(AgentUsagePage(store: store)), CGSize(width: width, height: 1400)),
@@ -546,6 +551,34 @@ enum SnapshotHarness {
             AgentInspectorView(store: store, session: session)
         } else {
             Text("No session")
+        }
+    }
+
+    /// `LOCAL_OBSERVER_SNAPSHOT_SETTINGS_WINDOW=1`: the Settings view in a real titled window on screen, sized by its
+    /// content as the Settings scene sizes it, captured with its title bar by `screencapture` (needs Screen Recording).
+    private static func settingsWindow(store: AgentStore, to directory: URL) async {
+        NSApp.setActivationPolicy(.regular)
+        for dark in [false, true] {
+            let controller = NSHostingController(rootView: AgentSettingsView(store: store))
+            controller.sizingOptions = .preferredContentSize
+            let window = NSWindow(contentViewController: controller)
+            window.styleMask = [.titled, .closable, .miniaturizable]
+            window.setContentSize(controller.view.fittingSize)
+            // A bare NSHostingController doesn't pick up `.navigationTitle`; the Settings scene does.
+            window.title = SettingsPane.agents.title
+            window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+            window.center()
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate()
+            windows.append(window)
+            try? await Task.sleep(for: .seconds(2))
+            let url = directory.appendingPathComponent("settings-window-\(dark ? "dark" : "light").png")
+            let capture = Process()
+            capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+            capture.arguments = ["-x", "-o", "-l", "\(window.windowNumber)", url.path]
+            try? capture.run()
+            capture.waitUntilExit()
+            window.orderOut(nil)
         }
     }
 

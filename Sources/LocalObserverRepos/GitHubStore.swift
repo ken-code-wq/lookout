@@ -549,6 +549,21 @@ public final class GitHubStore: ObservableObject {
         }
     }
 
+    /// Clones into `parent/<name>`, or `parent/<owner>-<name>` when that's taken; `then` runs after, to rescan.
+    public func clone(_ slug: String, into parent: String, then: @escaping () -> Void = {}) {
+        let name = slug.split(separator: "/").last.map(String.init) ?? slug
+        var destination = (parent as NSString).appendingPathComponent(name)
+        if FileManager.default.fileExists(atPath: destination) {
+            destination = (parent as NSString).appendingPathComponent(slug.replacingOccurrences(of: "/", with: "-"))
+        }
+        let target = destination
+        act(Self.cloneKey(slug), success: "Cloned \(slug) to \((target as NSString).abbreviatingWithTildeInPath)", then: { _ in then() }) {
+            GitHubAPI.clone(slug, to: target)
+        }
+    }
+
+    public static func cloneKey(_ slug: String) -> String { "clone:\(slug)" }
+
     public func checkoutBranch(_ slug: String, _ branch: String, in root: String, then: @escaping () -> Void = {}) {
         act("branch:\(slug):\(branch):checkout", success: "Switched to \(branch)", then: { _ in then() }) {
             GitHubAPI.checkoutBranch(branch, in: root)

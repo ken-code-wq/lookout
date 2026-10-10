@@ -127,7 +127,10 @@ struct ContentView: View {
             } else if state.sidebar == .agentLimits {
                 AgentLimitsPage(store: agentStore)
             } else if state.sidebar == .repos {
-                ReposPage(store: repoStore)
+                ReposPage(store: repoStore, github: gitHubStore) { slug in
+                    gitHubStore.path = [.repo(slug, .code)]
+                    state.sidebar = .github
+                }
             } else if state.sidebar == .inbox {
                 InboxPage(store: gitHubStore, repos: repoStore)
             } else if state.sidebar == .ci {

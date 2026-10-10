@@ -30,6 +30,8 @@ struct AgentSettingsView: View {
         }
         .background(N.bg)
         .frame(width: 820, height: 600)
+        // The window's title follows the pane, as in System Settings; the sidebar doesn't repeat "Settings".
+        .navigationTitle(pane.title)
     }
 }
 
@@ -72,11 +74,6 @@ private struct SettingsSidebar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text("Settings")
-                .font(NFont.caption.weight(.medium))
-                .foregroundStyle(N.text3)
-                .padding(.horizontal, 10)
-                .padding(.bottom, 6)
             ForEach(SettingsPane.allCases) { pane in
                 if pane.startsGroup { Spacer().frame(height: 10) }
                 SettingsSidebarRow(pane: pane, selected: selection == pane) { selection = pane }
@@ -84,8 +81,7 @@ private struct SettingsSidebar: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 8)
-        .padding(.top, 20)
-        .padding(.bottom, 12)
+        .padding(.vertical, 12)
         .frame(width: 196, alignment: .topLeading)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(N.bgSoft)
