@@ -356,7 +356,7 @@ struct ProfileCard: View {
             }
             .foregroundStyle(palette.text)
             Spacer()
-            Text("Computed on my Mac. Nothing left it.").font(.system(size: 15)).foregroundStyle(palette.text2)
+            Text("Computed on my Mac, not in the cloud.").font(.system(size: 15)).foregroundStyle(palette.text2)
         }
         .padding(.top, 22)
         .overlay(alignment: .top) { Rectangle().fill(palette.divider).frame(height: 1) }

@@ -117,16 +117,18 @@ public final class AgentStore: ObservableObject {
         glanceRange = AgentGlanceRange(rawValue: defaults.string(forKey: Keys.glanceRange) ?? "") ?? .last24h
         glanceMetric = AgentMetricKind(rawValue: defaults.string(forKey: Keys.glanceMetric) ?? "") ?? .tokens
         glanceAgents = Set((defaults.stringArray(forKey: Keys.glanceAgents) ?? []).compactMap(AgentKind.init(rawValue:)))
-        ledgerEvents = persistsLedger ? Self.loadLedger(fileManager: fileManager) : []
-        ledgerSignature = Self.signature(ledgerEvents)
-        applyUsage(Self.computeUsage(
-            events: ledgerEvents, filter: filter, enabledAgents: settings.enabledAgents,
-            search: searchText, glance: glanceFilter
-        ), usage: true, glance: true)
-        usageBuiltAt = Date()
         if persistsLedger {
-            historyLoad = Task { [weak self] in await self?.loadHistory() }
+            // The ledger runs to tens of megabytes; decoding it here held up launch. Scans wait on this task.
+            historyLoad = Task { [weak self] in
+                await self?.loadStoredLedger()
+                await self?.loadHistory()
+            }
         } else {
+            applyUsage(Self.computeUsage(
+                events: [], filter: filter, enabledAgents: settings.enabledAgents,
+                search: searchText, glance: glanceFilter
+            ), usage: true, glance: true)
+            usageBuiltAt = Date()
             isHistoryLoaded = true
         }
         guard autoStart else { return }
@@ -470,6 +472,23 @@ public final class AgentStore: ObservableObject {
     }
 
     /// Reads the history file off the main thread. A file this build can't read is never written over.
+    /// Reads the saved ledger and builds the usage reports from it off the main thread.
+    private func loadStoredLedger() async {
+        let manager = fileManager
+        let filter = filter, enabled = settings.enabledAgents, search = searchText, glance = glanceFilter
+        let (events, bundle) = await Task.detached(priority: .userInitiated) {
+            let events = Self.loadLedger(fileManager: manager)
+            return (events, Self.computeUsage(events: events, filter: filter, enabledAgents: enabled, search: search, glance: glance))
+        }.value
+        // Demo data got there first.
+        guard ledgerEvents.isEmpty else { return }
+        ledgerEvents = events
+        ledgerSignature = Self.signature(events)
+        ledgerRevision += 1
+        applyUsage(bundle, usage: true, glance: true)
+        usageBuiltAt = Date()
+    }
+
     private func loadHistory() async {
         let url = UsageHistory.defaultURL(fileManager: fileManager)
         let manager = fileManager
@@ -829,7 +848,7 @@ public final class AgentStore: ObservableObject {
         }
     }
 
-    private static func ledgerURL(fileManager: FileManager) -> URL {
+    nonisolated private static func ledgerURL(fileManager: FileManager) -> URL {
         let base = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? fileManager.temporaryDirectory
         return base.appendingPathComponent("LocalObserver", isDirectory: true)
@@ -909,7 +928,7 @@ public final class AgentStore: ObservableObject {
         try? history?.write(to: UsageHistory.defaultURL(fileManager: fileManager), fileManager: fileManager)
     }
 
-    private static func loadLedger(fileManager: FileManager) -> [AgentUsageEvent] {
+    nonisolated private static func loadLedger(fileManager: FileManager) -> [AgentUsageEvent] {
         guard let data = try? Data(contentsOf: ledgerURL(fileManager: fileManager)),
               let ledger = try? JSONDecoder().decode(Ledger.self, from: data),
               ledger.version == ledgerVersion else { return [] }

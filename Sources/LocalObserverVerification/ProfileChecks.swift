@@ -412,6 +412,10 @@ enum ProfileChecks {
         precondition(byID["anniversary.1m"] == nil, "No anniversary before its day")
         precondition(byID["tokens.1M"]?.isRetroactive == true && earned.map(\.earnedAt) == earned.map(\.earnedAt).sorted(), "Backfilled milestones carry their real dates")
 
+        // A quiet day still notices an anniversary; nothing else being due, a quiet day does no work.
+        precondition(!history.anniversaryDue(now: at(30), calendar: cal) && history.anniversaryDue(now: at(2, 12, month: 11), calendar: cal),
+                     "Anniversaries come due with the date")
+
         // Earned once: a later check adds only what's new and never re-dates.
         let later = history.updateMilestones(now: at(2, 12, month: 11), calendar: cal)
         precondition(later.map(\.id) == ["anniversary.1m"] && later[0].earnedAt == at(1, 10, month: 11), "Anniversaries arrive on their day")

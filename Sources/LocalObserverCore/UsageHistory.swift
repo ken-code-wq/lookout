@@ -368,7 +368,10 @@ public struct UsageHistory: Codable, Hashable, Sendable {
         }
         // Milestones keep the date they were first recorded with, so wait until every enabled agent's old logs are in:
         // a half-read history would date them late, or call one reached today that was reached years ago.
-        if changed, scan.enabled.isSubset(of: backfilledAgents) { updateMilestones(now: now, calendar: calendar) }
+        // An anniversary arrives with the date, not with new usage, so a quiet day still checks for one.
+        if changed || anniversaryDue(now: now, calendar: calendar), scan.enabled.isSubset(of: backfilledAgents) {
+            updateMilestones(now: now, calendar: calendar)
+        }
         return (changed, replayed)
     }
 

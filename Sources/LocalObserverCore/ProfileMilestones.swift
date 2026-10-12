@@ -65,6 +65,16 @@ public struct EarnedMilestone: Codable, Hashable, Identifiable, Sendable {
 }
 
 public extension UsageHistory {
+    /// Whether an anniversary of the first activity has arrived and isn't recorded yet.
+    func anniversaryDue(now: Date, calendar: Calendar = .current) -> Bool {
+        guard let first = firstActivityAt else { return false }
+        return Milestone.catalog.contains { milestone in
+            guard milestone.kind == .anniversary, milestones[milestone.id] == nil,
+                  let date = calendar.date(byAdding: .month, value: Int(milestone.threshold), to: first) else { return false }
+            return date <= now
+        }
+    }
+
     /// Records every milestone reached and not yet recorded, dated when the history shows it was reached. Returns
     /// the new ones, earliest first. Recorded milestones are never revisited.
     @discardableResult
