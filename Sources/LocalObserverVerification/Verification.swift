@@ -108,6 +108,7 @@ struct LocalObserverVerification {
         precondition(abs((window.elapsedFraction(now: now) ?? 0) - 0.4) < 0.001, "Window elapsed fraction failed")
 
         ParsingChecks.checkQoder()
+        ParsingChecks.checkEffort()
 
         // Dashboard streaks: active today and the two days before (current 3), a 4-day run earlier (longest 4).
         let heatCalendar = Calendar.current
@@ -133,6 +134,7 @@ struct LocalObserverVerification {
         AgentTaskChecks.run()
         RoutingChecks.run()
         WeeklyReportChecks.run()
+        ProfileChecks.run()
         HookChecks.run()
         AutomationChecks.run()
         ServerLogChecks.run()

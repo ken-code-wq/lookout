@@ -9,6 +9,7 @@ enum ParsingChecks {
         checkClaude()
         checkCodex()
         checkQoder()
+        checkEffort()
         print("Lookout parsing checks passed")
     }
 
@@ -193,6 +194,124 @@ enum ParsingChecks {
         precondition(first.model == "Qwen3.8-Flash", "Qoder model display name")
         precondition(first.cost == nil, "Qoder bills in credits, not dollars")
         precondition((parsed.sessions[0].usage?.processedTokens ?? 0) > 21_000, "Qoder session totals")
+    }
+
+    /// Made-up lines for each agent that records reasoning effort. Nothing here comes from a real transcript.
+    static func checkEffort() {
+        precondition(AgentEffort.levels == ["minimal", "low", "medium", "high", "xhigh", "max"], "Effort vocabulary changed")
+        for spelling in ["xhigh", "x-high", "extra_high", "Extra High"] {
+            precondition(AgentEffort.normalize(spelling) == "xhigh", "\(spelling) must normalize to xhigh")
+        }
+        precondition(AgentEffort.normalize("ultrathink") == "max" && AgentEffort.normalize("MAX") == "max", "max spellings")
+        precondition(AgentEffort.normalize("Medium") == "medium" && AgentEffort.normalize("minimal") == "minimal", "Plain levels must match case-insensitively")
+        for unknown in ["default", "none", "auto", "16000", "", "turbo"] {
+            precondition(AgentEffort.normalize(unknown) == nil, "\"\(unknown)\" is not an effort level")
+        }
+        precondition(AgentEffort.normalize(nil) == nil, "Missing effort must stay nil")
+
+        // Ledgers written before the field existed decode with nil effort, and a set value round-trips.
+        let usage = TokenUsage(inputTokens: 10, outputTokens: 5)
+        let legacy = AgentUsageEvent(id: "legacy", agent: .claude, sessionID: "s", projectPath: "", projectName: "", model: "opus",
+                                     observedAt: Date(timeIntervalSince1970: 0), usage: usage, cost: nil, requests: 1,
+                                     sourcePath: "", sourceKind: .transcript)
+        guard let legacyData = try? JSONEncoder().encode(legacy), let legacyJSON = String(data: legacyData, encoding: .utf8) else {
+            preconditionFailure("Event encoding failed")
+        }
+        precondition(!legacyJSON.contains("\"effort\""), "An event without effort must not write the key")
+        precondition((try? JSONDecoder().decode(AgentUsageEvent.self, from: legacyData))?.effort == nil, "Old ledger events must decode with nil effort")
+        var tagged = legacy
+        tagged.effort = "high"
+        guard let taggedData = try? JSONEncoder().encode(tagged), let decoded = try? JSONDecoder().decode(AgentUsageEvent.self, from: taggedData) else {
+            preconditionFailure("Effort round-trip failed")
+        }
+        precondition(decoded.effort == "high", "Effort must round-trip through the ledger")
+
+        checkCodexEffort()
+        checkClaudeEffort()
+        checkOpenCodeEffort()
+        checkCopilotEffort()
+    }
+
+    private static func checkCodexEffort() {
+        let now = AgentJSON_date("2026-09-20T10:30:00Z")
+        func tokenCount(_ time: String, _ output: Int) -> String {
+            #"{"timestamp":"2026-09-20T10:00:\#(time).000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1000,"cached_input_tokens":0,"output_tokens":\#(output),"total_tokens":\#(1_000 + output)}}}}"#
+        }
+        let rollout = [
+            #"{"timestamp":"2026-09-20T10:00:00.000Z","type":"session_meta","payload":{"id":"codex-effort","cwd":"/tmp/codex-effort"}}"#,
+            #"{"timestamp":"2026-09-20T10:00:01.000Z","type":"turn_context","payload":{"model":"gpt-5.5","effort":"high","collaboration_mode":{"settings":{"reasoning_effort":"high"}}}}"#,
+            tokenCount("02", 50),
+            #"{"timestamp":"2026-09-20T10:00:03.000Z","type":"turn_context","payload":{"model":"gpt-5.5","effort":"xhigh","collaboration_mode":{"settings":{"reasoning_effort":"xhigh"}}}}"#,
+            tokenCount("04", 60),
+            // Only the collaboration-mode copy is present, so its value is the one used.
+            #"{"timestamp":"2026-09-20T10:00:05.000Z","type":"turn_context","payload":{"model":"gpt-5.5","collaboration_mode":{"settings":{"reasoning_effort":"low"}}}}"#,
+            tokenCount("06", 70),
+            // No effort anywhere: unknown, not the previous turn's level.
+            #"{"timestamp":"2026-09-20T10:00:07.000Z","type":"turn_context","payload":{"model":"gpt-5.5"}}"#,
+            tokenCount("08", 80),
+            #"{"timestamp":"2026-09-20T10:00:09.000Z","type":"turn_context","payload":{"model":"gpt-5.5","effort":"extra_high"}}"#,
+            tokenCount("10", 90)
+        ].joined(separator: "\n")
+
+        let parsed = AgentParsingSeams.parseCodex([.init(path: "/tmp/codex/rollout-effort.jsonl", modifiedAt: now, contents: rollout)], now: now)
+        let own = parsed.usageEvents.filter { $0.sessionID == "codex-effort" }.sorted { $0.observedAt < $1.observedAt }
+        let efforts: [String?] = own.map(\.effort)
+        precondition(efforts == ["high", "xhigh", "low", nil, "xhigh"], "Codex effort must follow each turn_context (got \(efforts))")
+        precondition(parsed.sessions.first { $0.sessionID == "codex-effort" }?.effort == "xhigh", "Codex session effort must be the latest turn's")
+    }
+
+    private static func checkClaudeEffort() {
+        let now = AgentJSON_date("2026-09-20T10:30:00Z")
+        let lines = [
+            claudeLine(message: "m_a", request: "r_a", output: 10, extra: #","effort":"high""#, second: 1),
+            // perTurnEffort alone is enough; when both are present they agree.
+            claudeLine(message: "m_e", request: "r_e", output: 20, extra: #","perTurnEffort":"xhigh""#, second: 2),
+            claudeLine(message: "m_b", request: "r_b", output: 30, extra: #","perTurnEffort":"max","effort":"max""#, second: 3),
+            // Haiku doesn't take an effort setting, so the line carries none.
+            claudeLine(message: "m_c", request: "r_c", output: 40, model: "claude-haiku-4-5-20251001", second: 4),
+            claudeLine(message: "m_d", request: "r_d", output: 50, extra: #","effort":"low""#, sidechain: true, second: 5)
+        ].joined(separator: "\n")
+
+        let parsed = AgentParsingSeams.parseClaude([.init(path: "/tmp/effort/s-1.jsonl", modifiedAt: now.addingTimeInterval(-60), contents: lines)], now: now)
+        let events = Dictionary(uniqueKeysWithValues: parsed.usageEvents.map { ($0.id, $0) })
+        precondition(events["claude|m_a|r_a"]?.effort == "high", "Claude effort on a message line")
+        precondition(events["claude|m_e|r_e"]?.effort == "xhigh", "Claude perTurnEffort alone")
+        precondition(events["claude|m_b|r_b"]?.effort == "max", "Claude perTurnEffort and effort agree")
+        precondition(events["claude|m_c|r_c"]?.effort == nil, "Claude line without effort must stay nil")
+        precondition(events["claude|m_d|r_d"]?.effort == "low", "Subagent effort is attributed to its own message")
+        // The session shows the main thread's latest effort, not the subagent's.
+        precondition(parsed.sessions.first?.effort == "max", "Claude session effort must ignore subagent lines (got \(parsed.sessions.first?.effort ?? "nil"))")
+    }
+
+    private static func checkOpenCodeEffort() {
+        let tokens = #""tokens":{"input":100,"output":20,"reasoning":5,"cache":{"read":0,"write":0}},"time":{"created":1789876800000,"completed":1789876801000},"cost":0"#
+        // Assistant messages carry the variant at the top level; session_message rows nest it under `model`.
+        let rows = [
+            #"{"role":"assistant","modelID":"gpt-x","providerID":"openai","variant":"high","# + tokens + "}",
+            #"{"role":"assistant","modelID":"gpt-x","providerID":"openai","# + tokens + "}",
+            #"{"model":{"id":"gpt-x","providerID":"openai","variant":"xhigh"},"# + tokens + "}",
+            #"{"model":{"id":"gpt-x","providerID":"openai","variant":"default"},"# + tokens + "}"
+        ]
+        let efforts: [String?] = rows.enumerated().map { index, row in
+            AgentParsingSeams.parseOpenCodeMessage(row, id: "msg_\(index)")?.effort
+        }
+        precondition(efforts == ["high", nil, "xhigh", nil], "OpenCode variant must map to effort, and \"default\" must stay nil (got \(efforts))")
+    }
+
+    private static func checkCopilotEffort() {
+        let now = AgentJSON_date("2026-09-20T10:30:00Z")
+        // Copilot logs effort at session start and resume. Each shutdown covers the segment since the last of those.
+        let log = [
+            #"{"type":"session.start","timestamp":"2026-09-20T10:00:00.000Z","id":"c1","data":{"sessionId":"cop-1","selectedModel":"gpt-5","reasoningEffort":"high","context":{"cwd":"/tmp/copilot-project","branch":"main"}}}"#,
+            #"{"type":"session.shutdown","timestamp":"2026-09-20T10:05:00.000Z","id":"c2","data":{"currentModel":"gpt-5","modelMetrics":{"gpt-5":{"requests":{"count":2},"usage":{"inputTokens":1000,"cacheReadTokens":200,"cacheWriteTokens":0,"outputTokens":100,"reasoningTokens":10}}}}}"#,
+            #"{"type":"session.resume","timestamp":"2026-09-20T10:06:00.000Z","id":"c3","data":{"sessionId":"cop-1","reasoningEffort":"medium"}}"#,
+            #"{"type":"session.shutdown","timestamp":"2026-09-20T10:10:00.000Z","id":"c4","data":{"currentModel":"gpt-5","modelMetrics":{"gpt-5":{"requests":{"count":1},"usage":{"inputTokens":500,"cacheReadTokens":0,"cacheWriteTokens":0,"outputTokens":40,"reasoningTokens":0}}}}}"#
+        ].joined(separator: "\n")
+
+        let parsed = AgentParsingSeams.parseCopilot([.init(path: "/tmp/copilot/cop-1/events.jsonl", modifiedAt: now, contents: log)], now: now)
+        let efforts: [String?] = parsed.usageEvents.sorted { $0.observedAt < $1.observedAt }.map(\.effort)
+        precondition(efforts == ["high", "medium"], "Copilot segment effort (got \(efforts))")
+        precondition(parsed.sessions.first?.effort == "medium", "Copilot session effort must be the latest resume's")
     }
 
     private static func AgentJSON_date(_ string: String) -> Date {

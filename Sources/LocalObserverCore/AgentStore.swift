@@ -35,6 +35,12 @@ public final class AgentStore: ObservableObject {
     @Published public private(set) var glanceUsage = AgentUsageReport(filter: AgentUsageFilter())
     @Published public var selectedSessionID: String?
     @Published public var isSettingsPresented = false
+    /// Lookout's permanent usage history, never trimmed, so it outlives the agents' own logs. Feeds the You page:
+    /// see `profile(for:)` and `newMilestones`. Empty until `isHistoryLoaded`; it loads off the main thread.
+    @Published public private(set) var history = UsageHistory()
+    @Published public private(set) var isHistoryLoaded = false
+    /// Bumped whenever `history` changes, so consumers can cache profiles built from it.
+    public private(set) var historyRevision = 0
 
     private let defaults: UserDefaults
     private let fileManager: FileManager
@@ -70,6 +76,15 @@ public final class AgentStore: ObservableObject {
     private var scannedProcesses: [AgentSession] = []
     /// States agents reported through hooks, keyed by running session id. See `AgentHookOverlay`.
     public private(set) var hookStates: [String: AgentHookState] = [:]
+    /// False when the history file was written by a newer Lookout: it stays untouched and this one lives in memory.
+    private var persistsHistory = true
+    private var historyLoad: Task<Void, Never>?
+    private var pendingHistory: UsageHistory?
+    /// Shown with the scan warnings when the history on disk couldn't be read.
+    private var historyWarning: String?
+    /// The raw ledger is replayed into the history once per launch, after any backfill, to recover events whose logs
+    /// are gone and anything a crash kept from being saved.
+    private var historyNeedsReplay = true
 
     private enum Keys {
         static let settings = "LocalObserver.agentSettings"
@@ -84,6 +99,8 @@ public final class AgentStore: ObservableObject {
     }
 
     /// Bumped whenever event ids or token semantics change, so stale (e.g. double-counted) history is discarded.
+    /// `UsageHistory` is never discarded and dedupes on the same ids: an id change there counts still-readable
+    /// events twice, so it needs its own migration.
     nonisolated private static let ledgerVersion = 2
 
     public init(defaults: UserDefaults = .standard, fileManager: FileManager = .default, autoStart: Bool = true,
@@ -107,6 +124,11 @@ public final class AgentStore: ObservableObject {
             search: searchText, glance: glanceFilter
         ), usage: true, glance: true)
         usageBuiltAt = Date()
+        if persistsLedger {
+            historyLoad = Task { [weak self] in await self?.loadHistory() }
+        } else {
+            isHistoryLoaded = true
+        }
         guard autoStart else { return }
         // The app delegate can't reach this store, so it flushes the pending ledger itself when the app quits.
         quitObserver = NotificationCenter.default.addObserver(
@@ -137,53 +159,112 @@ public final class AgentStore: ObservableObject {
         let enabled = settings.enabledAgents
         let historyDays = settings.historyDays
         refreshTask = Task { [weak self] in
-            let fresh = await AgentDiscovery.scan(enabledAgents: enabled, historyDays: historyDays)
+            await self?.historyLoad?.value
+            // Agents whose old logs aren't in the history yet are read as far back as their logs go, once.
+            let backfill = self?.agentsToBackfill(enabled) ?? []
+            let fresh = await AgentDiscovery.scan(enabledAgents: enabled, historyDays: backfill.isEmpty ? historyDays : UsageHistory.backfillDays)
             guard let self else { return }
             // Merging, sorting, and counting a year of events is real work; keep it off the main thread.
             let previous = self.ledgerEvents
             let lastFresh = self.lastFreshSignature
             let mergedRecently = Date().timeIntervalSince(self.lastMergeAt) < 600
-            let outcome = await Task.detached(priority: .utility) { () -> (merged: [AgentUsageEvent], signature: Int, counts: [AgentKind: Int], freshSignature: Int)? in
-                let freshSignature = Self.signature(fresh.usageEvents)
+            let previousHistory = self.history
+            let historyStep = HistoryStep(enabled: enabled, backfill: backfill, replay: self.historyNeedsReplay && self.persistsLedger,
+                                          rememberDays: historyDays + 35)
+            let outcome = await Task.detached(priority: .utility) { () -> ScanMerge in
+                var result = ScanMerge()
+                // A backfill pass reaches past the history window; the raw ledger and Usage page keep to the window.
+                let windowStart = Date().addingTimeInterval(-Double(historyDays) * 86_400)
+                let events = backfill.isEmpty ? fresh.usageEvents : fresh.usageEvents.filter { $0.observedAt >= windowStart }
+                let freshSignature = Self.signature(events)
                 // Same events as last scan and merged recently (the 365-day trim still runs periodically): nothing to do.
-                if mergedRecently, freshSignature == lastFresh { return nil }
-                let cutoff = Calendar.current.date(byAdding: .day, value: -365, to: Date()) ?? .distantPast
-                let merged = Self.merge(previous, fresh.usageEvents).filter { $0.observedAt >= cutoff }
-                let counts = Dictionary(grouping: merged, by: \.agent).mapValues(\.count)
-                return (merged, Self.signature(merged), counts, freshSignature)
+                if !(mergedRecently && freshSignature == lastFresh) {
+                    let cutoff = Calendar.current.date(byAdding: .day, value: -365, to: Date()) ?? .distantPast
+                    let merged = Self.merge(previous, events).filter { $0.observedAt >= cutoff }
+                    let counts = Dictionary(grouping: merged, by: \.agent).mapValues(\.count)
+                    result.ledger = (merged, Self.signature(merged), counts, freshSignature)
+                }
+                guard result.ledger != nil || !backfill.isEmpty || historyStep.replay else { return result }
+                (result.history, result.replayed) = Self.mergeHistory(previousHistory, fresh: fresh, ledger: previous, step: historyStep)
+                return result
             }.value
             var ledgerChanged = false
-            if let outcome {
-                self.lastFreshSignature = outcome.freshSignature
+            if let ledger = outcome.ledger {
+                self.lastFreshSignature = ledger.freshSignature
                 self.lastMergeAt = Date()
-                self.lastCounts = outcome.counts
-                ledgerChanged = outcome.signature != self.ledgerSignature
+                self.lastCounts = ledger.counts
+                ledgerChanged = ledger.signature != self.ledgerSignature
                 if ledgerChanged {
-                    self.ledgerEvents = outcome.merged
-                    self.ledgerSignature = outcome.signature
+                    self.ledgerEvents = ledger.merged
+                    self.ledgerSignature = ledger.signature
                     self.ledgerRevision += 1
-                    self.persistLedger(outcome.merged)
+                    self.persistLedger(ledger.merged)
                 }
+            }
+            if outcome.replayed { self.historyNeedsReplay = false }
+            if var history = outcome.history {
+                // Milestones celebrated while the merge ran.
+                history.acknowledgeMilestones(self.history.acknowledgedMilestones)
+                self.history = history
+                self.historyRevision += 1
+                self.persistHistory(history)
             }
             let counts = self.lastCounts
             var snapshot = fresh
             snapshot.usageEvents = []
+            if !backfill.isEmpty {
+                // The backfill read years of sessions; the session list keeps to the usual window.
+                let start = fresh.discoveredAt.addingTimeInterval(-Double(historyDays) * 86_400)
+                snapshot.sessions = fresh.sessions.filter { $0.updatedAt >= start }
+            }
             self.scannedProcesses = snapshot.processes.map(Self.withCheckout)
             snapshot.processes = AgentHookOverlay.apply(self.hookStates, to: self.scannedProcesses)
             snapshot.integrations = fresh.integrations.map { integration in
                 var updated = integration
                 updated.usageEventCount = counts[integration.agent] ?? 0
+                if !backfill.isEmpty { updated.sessionCount = snapshot.sessions.filter { $0.agent == integration.agent }.count }
                 return updated
             }
             // Assigning an @Published property always notifies observers, so only publish real changes.
             if !Self.sameContent(snapshot, self.snapshot) { self.snapshot = snapshot }
             if self.lastRefresh != fresh.discoveredAt { self.lastRefresh = fresh.discoveredAt }
-            let error = fresh.warnings.isEmpty ? nil : fresh.warnings.joined(separator: "\n")
+            let warnings = fresh.warnings + [self.historyWarning].compactMap { $0 }
+            let error = warnings.isEmpty ? nil : warnings.joined(separator: "\n")
             if self.lastError != error { self.lastError = error }
             self.refreshTask = nil
             if self.isScanning { self.isScanning = false }
             if ledgerChanged || Date().timeIntervalSince(self.usageBuiltAt) > 60 { self.rebuildUsage() }
         }
+    }
+
+    private struct ScanMerge: Sendable {
+        var ledger: (merged: [AgentUsageEvent], signature: Int, counts: [AgentKind: Int], freshSignature: Int)?
+        /// Nil when the history didn't change.
+        var history: UsageHistory?
+        var replayed = false
+    }
+
+    private struct HistoryStep: Sendable {
+        var enabled: Set<AgentKind>
+        /// Agents this scan read as far back as their logs go.
+        var backfill: Set<AgentKind>
+        /// Replay the raw ledger once every enabled agent is backfilled.
+        var replay: Bool
+        /// Ids are kept a little longer than the scan window; readers drop older events.
+        var rememberDays: Int
+    }
+
+    private func agentsToBackfill(_ enabled: Set<AgentKind>) -> Set<AgentKind> {
+        persistsLedger && persistsHistory && isHistoryLoaded ? enabled.subtracting(history.backfilledAgents) : []
+    }
+
+    /// Folds a scan into the permanent history; nil when nothing changed. See `UsageHistory.absorb`.
+    nonisolated private static func mergeHistory(_ history: UsageHistory, fresh: AgentSnapshot, ledger: [AgentUsageEvent],
+                                                 step: HistoryStep) -> (UsageHistory?, Bool) {
+        var updated = history
+        let scan = UsageHistory.Scan(events: fresh.usageEvents, warnings: fresh.warnings, enabled: step.enabled, backfill: step.backfill)
+        let result = updated.absorb(scan, replaying: step.replay ? ledger : nil, rememberDays: step.rememberDays)
+        return (result.changed ? updated : nil, result.replayed)
     }
 
     /// Debug/demo: shows the given data instead of this Mac's. Only for stores made with `autoStart: false,
@@ -201,6 +282,12 @@ public final class AgentStore: ObservableObject {
         ledgerEvents = ledger
         ledgerSignature = Self.signature(ledger)
         ledgerRevision += 1
+        var demoHistory = UsageHistory(createdAt: ledger.map(\.observedAt).min() ?? snapshot.discoveredAt)
+        demoHistory.merge(ledger, now: snapshot.discoveredAt)
+        demoHistory.backfilledAgents = Set(AgentKind.allCases)
+        demoHistory.updateMilestones(now: snapshot.discoveredAt)
+        history = demoHistory
+        historyRevision += 1
         accountReports = Dictionary(limits.map { ($0.agent, $0) }, uniquingKeysWith: { _, latest in latest })
         lastRefresh = snapshot.discoveredAt
         rebuildUsage()
@@ -362,6 +449,57 @@ public final class AgentStore: ObservableObject {
     }
 
     public var hasUsageHistory: Bool { !ledgerEvents.isEmpty }
+
+    // MARK: - History
+
+    /// The You page: a profile of `period` from the permanent history, built off the main actor. Cache it per
+    /// `historyRevision`; a profile of all time over years of history takes a few milliseconds.
+    public func profile(for period: ProfilePeriod, now: Date = .now) async -> PersonalProfile {
+        await historyLoad?.value
+        let history = history
+        return await Task.detached(priority: .userInitiated) { history.profile(for: period, now: now) }.value
+    }
+
+    /// Milestones reached and not celebrated yet, earliest first. On the first run this includes everything found in
+    /// the backfilled history; `EarnedMilestone.isRetroactive` tells those apart from ones reached just now.
+    public var newMilestones: [EarnedMilestone] { history.unacknowledgedMilestones }
+
+    /// True while some enabled agent's older logs are still being read into the history, so totals may still grow.
+    public var isBackfillingHistory: Bool {
+        persistsLedger && persistsHistory && (!isHistoryLoaded || !settings.enabledAgents.isSubset(of: history.backfilledAgents))
+    }
+
+    /// Reads the history file off the main thread. A file this build can't read is never written over.
+    private func loadHistory() async {
+        let url = UsageHistory.defaultURL(fileManager: fileManager)
+        let manager = fileManager
+        let result = await Task.detached(priority: .userInitiated) { UsageHistory.load(from: url, fileManager: manager) }.value
+        switch result {
+        case .loaded(let stored):
+            history = stored
+        case .missing:
+            break
+        case .newerFormat:
+            persistsHistory = false
+            historyWarning = "Usage history was saved by a newer Lookout; this one won't write over it"
+        case .unreadable(let preservedAt):
+            // Couldn't move it aside: then don't write over it either.
+            persistsHistory = preservedAt != nil
+            historyWarning = "Usage history could not be read" + (preservedAt.map { "; it was kept at \($0.path)" } ?? "")
+        }
+        historyRevision += 1
+        isHistoryLoaded = true
+    }
+
+    /// Marks milestones as celebrated so `newMilestones` stops offering them.
+    public func acknowledgeMilestones<S: Sequence>(_ ids: S) where S.Element == String {
+        var updated = history
+        updated.acknowledgeMilestones(ids)
+        guard updated.acknowledgedMilestones != history.acknowledgedMilestones else { return }
+        history = updated
+        historyRevision += 1
+        persistHistory(updated)
+    }
 
     private struct UsageBundle: Sendable {
         var usage: AgentUsageReport
@@ -702,26 +840,41 @@ public final class AgentStore: ObservableObject {
     private func persistLedger(_ events: [AgentUsageEvent]) {
         guard persistsLedger else { return }
         pendingLedger = events
+        scheduleWrite()
+    }
+
+    /// Queues the history for writing alongside the ledger.
+    private func persistHistory(_ history: UsageHistory) {
+        guard persistsLedger, persistsHistory, isHistoryLoaded else { return }
+        pendingHistory = history
+        scheduleWrite()
+    }
+
+    private func scheduleWrite() {
         guard ledgerWriteTask == nil else { return }
         let wait = max(0, Self.ledgerWriteInterval - Date().timeIntervalSince(lastLedgerWrite))
         ledgerWriteTask = Task { [weak self] in
             if wait > 0 { try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
             guard !Task.isCancelled, let self else { return }
             self.ledgerWriteTask = nil
-            await self.writePendingLedger()
+            await self.writePending()
         }
     }
 
-    private func writePendingLedger() async {
-        guard let events = pendingLedger else { return }
+    private func writePending() async {
+        let events = pendingLedger, history = pendingHistory
+        guard events != nil || history != nil else { return }
         pendingLedger = nil
+        pendingHistory = nil
         lastLedgerWrite = Date()
         let url = Self.ledgerURL(fileManager: fileManager)
+        let historyURL = UsageHistory.defaultURL(fileManager: fileManager)
         let manager = fileManager
         // Encoding a year of events takes a moment; keep it off the main thread.
         let failure = await Task.detached(priority: .utility) { () -> String? in
             do {
-                try Self.writeLedger(events, to: url, manager: manager)
+                if let events { try Self.writeLedger(events, to: url, manager: manager) }
+                try history?.write(to: historyURL, fileManager: manager)
                 return nil
             } catch {
                 return "Usage history could not be saved: \(error.localizedDescription)"
@@ -736,15 +889,18 @@ public final class AgentStore: ObservableObject {
         try data.write(to: url, options: .atomic)
     }
 
-    /// Writes any pending ledger now, synchronously. Call when the app is about to quit.
+    /// Writes any pending ledger and history now, synchronously. Call when the app is about to quit.
     public func flush() {
         guard persistsLedger else { return }
         ledgerWriteTask?.cancel()
         ledgerWriteTask = nil
-        guard let events = pendingLedger else { return }
+        let events = pendingLedger, history = pendingHistory
         pendingLedger = nil
+        pendingHistory = nil
+        guard events != nil || history != nil else { return }
         lastLedgerWrite = Date()
-        try? Self.writeLedger(events, to: Self.ledgerURL(fileManager: fileManager), manager: fileManager)
+        if let events { try? Self.writeLedger(events, to: Self.ledgerURL(fileManager: fileManager), manager: fileManager) }
+        try? history?.write(to: UsageHistory.defaultURL(fileManager: fileManager), fileManager: fileManager)
     }
 
     private static func loadLedger(fileManager: FileManager) -> [AgentUsageEvent] {
@@ -773,6 +929,8 @@ public final class AgentStore: ObservableObject {
         hasher.combine(events.count)
         // Readers can revise older events in place (same id, new counts), which the newest few alone would miss.
         hasher.combine(events.reduce(Int64(0)) { $0 &+ ($1.usage.processedTokens ?? 0) })
+        // Effort arrives on history already in the ledger when a reader learns to parse it; count it so that backfill persists.
+        hasher.combine(events.reduce(0) { $0 + ($1.effort == nil ? 0 : 1) })
         for event in events.prefix(64) {
             hasher.combine(event.id)
             hasher.combine(event.usage)

@@ -308,6 +308,8 @@ public struct AgentSession: Identifiable, Hashable, Sendable {
     public var projectPath: String
     public var projectName: String
     public var model: String
+    /// Latest reasoning effort the session ran at ("low"…"max"), when its logs record it.
+    public var effort: String? = nil
     public var account: String
     public var branch: String
     public var state: AgentActivityState
@@ -384,6 +386,8 @@ public struct AgentUsageEvent: Identifiable, Codable, Hashable, Sendable {
     public var projectPath: String
     public var projectName: String
     public var model: String
+    /// Reasoning effort the agent ran at ("low"…"max"), when its logs record it.
+    public var effort: String? = nil
     public var observedAt: Date
     public var usage: TokenUsage
     public var cost: Double?
@@ -409,7 +413,8 @@ public struct AgentUsageEvent: Identifiable, Codable, Hashable, Sendable {
         sourcePath: String,
         sourceKind: AgentSourceKind,
         costIsEstimated: Bool = false,
-        cacheSavings: Double? = nil
+        cacheSavings: Double? = nil,
+        effort: String? = nil
     ) {
         self.id = id
         self.agent = agent
@@ -425,6 +430,30 @@ public struct AgentUsageEvent: Identifiable, Codable, Hashable, Sendable {
         self.sourceKind = sourceKind
         self.costIsEstimated = costIsEstimated
         self.cacheSavings = cacheSavings
+        self.effort = effort
+    }
+}
+
+/// Reasoning effort, in one vocabulary across agents. Providers spell the same level differently,
+/// so readers pass whatever the log says through `normalize` and keep only what maps cleanly.
+public enum AgentEffort {
+    /// Lowest to highest.
+    public static let levels = ["minimal", "low", "medium", "high", "xhigh", "max"]
+
+    /// Maps a provider's spelling to one of `levels`. Unknown spellings, numeric thinking budgets and
+    /// "default" return nil rather than a guessed level.
+    public static func normalize(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        // Case and separators drop out, so "extra_high", "x-high" and "Extra High" all meet at "extrahigh".
+        switch raw.lowercased().filter(\.isLetter) {
+        case "minimal": return "minimal"
+        case "low": return "low"
+        case "medium": return "medium"
+        case "high": return "high"
+        case "xhigh", "extrahigh": return "xhigh"
+        case "max", "maximum", "ultrathink": return "max"
+        default: return nil
+        }
     }
 }
 

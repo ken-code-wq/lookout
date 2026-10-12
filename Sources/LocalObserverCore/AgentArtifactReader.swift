@@ -57,7 +57,8 @@ enum AgentUsageFactory {
         reportedCost: Double?,
         fast: Bool = false,
         requests: Int = 1,
-        sourcePath: String
+        sourcePath: String,
+        effort: String? = nil
     ) -> AgentUsageEvent {
         let reported = reportedCost.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
         let cost = reported ?? AgentPricing.cost(usage: usage, model: model, fast: fast)
@@ -75,7 +76,8 @@ enum AgentUsageFactory {
             sourcePath: sourcePath,
             sourceKind: .transcript,
             costIsEstimated: reported == nil && cost != nil,
-            cacheSavings: AgentPricing.cacheSavings(usage: usage, model: model, fast: fast)
+            cacheSavings: AgentPricing.cacheSavings(usage: usage, model: model, fast: fast),
+            effort: effort
         )
     }
 
