@@ -81,6 +81,51 @@ public enum AgentFormat {
         if s < 10 { return "just now" }
         return "\(duration(s)) ago"
     }
+
+    /// A friendly name for a model id as agents write it: "claude-opus-4-1" → "Opus 4.1", "claude-sonnet-4-5-20250929"
+    /// → "Sonnet 4.5", "gpt-5-codex" → "GPT-5 Codex", "gemini-2.5-pro" → "Gemini 2.5 Pro". Dates, `-latest` and provider
+    /// prefixes go. Any other id keeps its words and only has its casing tidied, so nothing is guessed at.
+    public static func modelDisplayName(_ model: String) -> String {
+        var name = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let slash = name.lastIndex(of: "/") { name = String(name[name.index(after: slash)...]) }
+        if let bracket = name.firstIndex(of: "[") { name = String(name[..<bracket]) }
+        for pattern in ["-latest$", "-[0-9]{8}$", "-[0-9]{4}-[0-9]{2}-[0-9]{2}$"] {
+            name = name.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
+        }
+        let words = name.split(whereSeparator: { $0 == "-" || $0 == "_" || $0 == " " }).map(String.init)
+        if let claude = claudeModelName(words) { return claude }
+        if words.count > 1, words[0].lowercased() == "gpt", words[1].first?.isNumber == true {
+            return (["GPT-\(words[1])"] + words.dropFirst(2).map(tidyModelWord)).joined(separator: " ")
+        }
+        return words.map(tidyModelWord).joined(separator: " ")
+    }
+
+    /// "claude-opus-4-1", "claude-3-5-sonnet", "claude-haiku-4.5" → "Opus 4.1", "Sonnet 3.5", "Haiku 4.5". Nil without a family.
+    private static func claudeModelName(_ words: [String]) -> String? {
+        guard words.first?.lowercased() == "claude" else { return nil }
+        let families = ["opus", "sonnet", "haiku", "fable"]
+        guard let family = words.dropFirst().first(where: { families.contains($0.lowercased()) }) else { return nil }
+        var versions: [String] = []
+        var extras: [String] = []
+        for word in words.dropFirst() where word.lowercased() != family.lowercased() {
+            if word.count == 8, word.allSatisfy(\.isNumber) { continue }
+            if word.first?.isNumber == true, word.count <= 4, word.allSatisfy({ $0.isNumber || $0 == "." }) {
+                versions.append(word)
+            } else {
+                extras.append(tidyModelWord(word))
+            }
+        }
+        let name = family.prefix(1).uppercased() + family.dropFirst().lowercased()
+        return ([name] + (versions.isEmpty ? [] : [versions.joined(separator: ".")]) + extras).joined(separator: " ")
+    }
+
+    /// Casing only: "pro" → "Pro", "gpt" → "GPT", while "o3" and words already capitalised stay as written.
+    private static func tidyModelWord(_ word: String) -> String {
+        if word.lowercased() == "gpt" { return "GPT" }
+        guard let first = word.first, first.isLowercase else { return word }
+        if first == "o", word.count > 1, word.dropFirst().allSatisfy(\.isNumber) { return word }
+        return first.uppercased() + word.dropFirst()
+    }
 }
 
 /// How a window's usage compares with an even burn across the window.

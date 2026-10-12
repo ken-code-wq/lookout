@@ -143,6 +143,17 @@ enum SnapshotDemo {
         ]
     }
 
+    /// Effort the demo models ran at, where the logs would say: the heavier models run harder, a few don't record it.
+    private static func demoEffort(_ model: String) -> String? {
+        switch model {
+        case "claude-opus-4-1": return "high"
+        case "claude-sonnet-4-5": return "medium"
+        case "gpt-5-codex": return "xhigh"
+        case "gpt-5": return "medium"
+        default: return nil
+        }
+    }
+
     /// A year of usage: weekday-heavy, slowly growing, with quiet stretches and the odd busy weekend.
     private static func ledger(now: Date) -> [AgentUsageEvent] {
         var rng = Seeded(state: 0x10C0_0D7E)
@@ -191,7 +202,7 @@ enum SnapshotDemo {
                         id: "\(sessionID)-\(turn)", agent: agent, sessionID: sessionID,
                         projectPath: "\(root)/\(project)", projectName: project, model: model, observedAt: at,
                         usage: usage, cost: cost, requests: 1, sourcePath: "", sourceKind: .transcript,
-                        costIsEstimated: agent != .claude, cacheSavings: cost * 0.6))
+                        costIsEstimated: agent != .claude, cacheSavings: cost * 0.6, effort: demoEffort(model)))
                 }
             }
         }

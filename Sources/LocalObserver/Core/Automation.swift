@@ -8,6 +8,7 @@ extension SidebarItem {
         case .sessions: self = .agentActivity
         case .usage: self = .agentUsage
         case .limits: self = .agentLimits
+        case .you: self = .you
         case .repos: self = .repos
         case .github: self = .github
         case .ci: self = .ci

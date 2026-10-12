@@ -10,7 +10,7 @@ struct IntentFailure: Error, CustomLocalizedStringResourceConvertible {
 }
 
 enum PageOption: String, AppEnum {
-    case dashboard, sessions, usage, limits, repos, github, ci, inbox, pulls, servers, launchers, containers, cleanup, shelf
+    case dashboard, sessions, usage, limits, you, repos, github, ci, inbox, pulls, servers, launchers, containers, cleanup, shelf
 
     static let typeDisplayRepresentation: TypeDisplayRepresentation = "Lookout Page"
     static let caseDisplayRepresentations: [PageOption: DisplayRepresentation] = [
@@ -18,6 +18,7 @@ enum PageOption: String, AppEnum {
         .sessions: "Sessions",
         .usage: "Usage",
         .limits: "Plan limits",
+        .you: "You",
         .repos: "Repositories",
         .github: "GitHub",
         .ci: "CI & Deploys",

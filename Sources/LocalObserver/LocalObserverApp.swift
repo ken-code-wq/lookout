@@ -122,6 +122,8 @@ struct LocalObserverApp: App {
                     .keyboardShortcut("2", modifiers: [.command, .option])
                 Button("Limits") { state.sidebar = .agentLimits }
                     .keyboardShortcut("3", modifiers: [.command, .option])
+                Button("You") { state.sidebar = .you }
+                    .keyboardShortcut("4", modifiers: [.command, .option])
                 Divider()
                 // The global shortcut fires first; this just shows it in the menu.
                 Button("Toggle Agent Peek") { LiveSurfaces.shared.togglePeek() }

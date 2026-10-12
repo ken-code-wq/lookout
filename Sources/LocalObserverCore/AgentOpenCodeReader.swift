@@ -9,6 +9,7 @@ struct OpenCodeUsageRecord: Sendable {
     var usage: TokenUsage
     var reportedCost: Double?
     var completed: Bool
+    var effort: String?
 }
 
 /// Reads OpenCode's local store (`~/.local/share/opencode/opencode*.db`, plus pre-SQLite
@@ -114,7 +115,8 @@ enum AgentOpenCodeReader {
                 observedAt: record.timestamp,
                 usage: record.usage,
                 reportedCost: record.reportedCost,
-                sourcePath: root.path
+                sourcePath: root.path,
+                effort: record.effort
             )
             result.usageEvents.append(event)
             eventsBySession[record.sessionID, default: []].append(event)
@@ -153,6 +155,7 @@ enum AgentOpenCodeReader {
                 requests: nil,
                 contextTokens: latest.map { ($0.usage.uncachedInputTokens ?? 0) + ($0.usage.cachedInputTokens ?? 0) + ($0.usage.cacheCreationTokens ?? 0) }
             )
+            session.effort = latest?.effort
             AgentUsageFactory.apply(eventsBySession[row.id] ?? [], to: &session)
             result.sessions.append(session)
         }
@@ -263,6 +266,9 @@ enum AgentOpenCodeReader {
         )
         guard (usage.processedTokens ?? 0) > 0 else { return nil }
         let cost = AgentJSON.double(message, ["cost"])
+        // The model variant ("high", "max", …) is OpenCode's reasoning preset. Assistant messages carry it at the
+        // top level; the session_message table nests it under `model`. "default" means no preset, so it stays nil.
+        let effort = AgentEffort.normalize(AgentJSON.string(message, ["variant"])) ?? AgentEffort.normalize(AgentJSON.string(modelObject, ["variant"]))
         return OpenCodeUsageRecord(
             messageID: id,
             sessionID: sessionID ?? AgentJSON.string(message, ["sessionID"]) ?? "",
@@ -272,7 +278,8 @@ enum AgentOpenCodeReader {
             usage: usage,
             // OpenCode writes 0 for models it cannot price, including subscription models.
             reportedCost: cost.flatMap { $0 > 0 ? $0 : nil },
-            completed: AgentJSON.path(message, ["time", "completed"]) != nil
+            completed: AgentJSON.path(message, ["time", "completed"]) != nil,
+            effort: effort
         )
     }
 

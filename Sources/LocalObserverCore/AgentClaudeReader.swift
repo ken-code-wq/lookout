@@ -15,6 +15,7 @@ struct ClaudeUsageRecord: Sendable {
     var fast: Bool
     var reportedCost: Double?
     var isSidechain: Bool
+    var effort: String?
 
     var totalTokens: Int64 { uncached + cached + cacheCreation + output }
 
@@ -56,6 +57,8 @@ struct ClaudeFileState: AgentLineScanState {
     var branch = ""
     var model = ""
     var sidechainModel = ""
+    /// Latest effort on a main-thread message.
+    var effort: String?
     var customTitle = ""
     var aiTitle = ""
     var summaryTitle = ""
@@ -132,6 +135,9 @@ struct ClaudeFileState: AgentLineScanState {
         if !model.isEmpty, !synthetic {
             if sidechain { sidechainModel = model } else { self.model = model }
         }
+        // Claude Code stamps effort on each message line; models without effort support leave it out.
+        let effort = AgentEffort.normalize(AgentJSON.string(object, ["perTurnEffort"])) ?? AgentEffort.normalize(AgentJSON.string(object, ["effort"]))
+        if !sidechain, let effort { self.effort = effort }
         if !sidechain {
             if AgentJSON.bool(object, ["isApiErrorMessage"]) == true {
                 tail = .error
@@ -158,7 +164,8 @@ struct ClaudeFileState: AgentLineScanState {
             output: max(0, AgentJSON.int64(usage, ["output_tokens"]) ?? 0),
             fast: AgentJSON.string(usage, ["speed"]) == "fast",
             reportedCost: AgentJSON.double(object, ["costUSD"]),
-            isSidechain: sidechain
+            isSidechain: sidechain,
+            effort: effort
         )
         guard record.totalTokens > 0 else { return }
         if !sidechain { contextTokens = record.uncached + record.cached + record.cacheCreation }
@@ -270,7 +277,8 @@ enum AgentClaudeReader {
                 usage: record.usage,
                 reportedCost: record.reportedCost,
                 fast: record.fast,
-                sourcePath: file.path
+                sourcePath: file.path,
+                effort: record.effort
             )
             perFile[location.file, default: []].append(event)
             result.usageEvents.append(event)
@@ -315,6 +323,7 @@ enum AgentClaudeReader {
                 requests: nil,
                 contextTokens: state.contextTokens
             )
+            session.effort = state.effort
             AgentUsageFactory.apply(events, to: &session)
             result.sessions.append(session)
         }

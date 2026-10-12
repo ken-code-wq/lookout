@@ -126,6 +126,8 @@ struct ContentView: View {
                 AgentUsagePage(store: agentStore)
             } else if state.sidebar == .agentLimits {
                 AgentLimitsPage(store: agentStore)
+            } else if state.sidebar == .you {
+                YouPage(agentStore: agentStore, request: $state.youPeriodRequest)
             } else if state.sidebar == .repos {
                 ReposPage(store: repoStore, github: gitHubStore) { slug in
                     gitHubStore.path = [.repo(slug, .code)]
@@ -264,6 +266,7 @@ struct SidebarView: View {
                 row(.agentActivity)
                 row(.agentUsage)
                 row(.agentLimits)
+                row(.you)
             }
             Section("Repos") {
                 row(.repos)
@@ -321,6 +324,10 @@ struct SidebarView: View {
                         .padding(.horizontal, 5).frame(height: 16)
                         .background(TagColor.orange.bg, in: Capsule())
                         .help(item.isRepoPage ? "\(urgent) need\(urgent == 1 ? "s" : "") a look" : "\(urgent) need\(urgent == 1 ? "s" : "") you")
+                } else if item == .you, hasNewMilestone {
+                    // A dot rather than a count: quiet, and the You page clears it when opened.
+                    Circle().fill(N.blue).frame(width: 7, height: 7)
+                        .help("A new milestone on your You page")
                 } else if n > 0 {
                     Text("\(n)").font(.system(size: 11.5)).foregroundStyle(.secondary).monospacedDigit()
                         .contentTransition(.numericText())
@@ -344,6 +351,9 @@ struct SidebarView: View {
         default: return state.count(for: item)
         }
     }
+
+    /// A milestone reached just now (not one found in old history) that the You page hasn't shown yet.
+    private var hasNewMilestone: Bool { agentStore.newMilestones.contains { !$0.isRetroactive } }
 
     /// Orange count of things waiting on the user; shown instead of the plain count when non-zero.
     private func attention(for item: SidebarItem) -> Int {

@@ -40,6 +40,12 @@ struct HomePage: View {
                               tightest: windows.max { $0.usedPercent < $1.usedPercent }, navigate: navigate)
                     .padding(.bottom, 16)
 
+                // A quiet line about the month (or a recap or Wrapped when one's ready); it adds its own spacing.
+                ProfileTeaserCard(agentStore: agentStore) { period in
+                    state.youPeriodRequest = period
+                    navigate(.you)
+                }
+
                 pair {
                     HomeCard(title: "Agents", symbol: "sparkles", count: sessions.count,
                              link: "All sessions", action: { navigate(.agentActivity) }) {

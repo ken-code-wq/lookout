@@ -650,6 +650,12 @@ private struct GeneralPane: View {
                     .fixedSize()
                 }
             }
+            SettingsHeader("Dashboard")
+            SettingsGroup {
+                SettingsRow(title: "Show profile recaps on the dashboard", detail: "A quiet line about your month, with your recap or Wrapped when one is ready. The You page is unaffected.") {
+                    Toggle("Show profile recaps on the dashboard", isOn: $prefs.showProfileRecaps).toggleStyle(.switch).labelsHidden()
+                }
+            }
             SettingsHeader("Power")
             SettingsGroup {
                 SettingsRow(title: "Keep this Mac awake", detail: "Stops idle sleep so long agent runs aren't interrupted. The display can still sleep.") {

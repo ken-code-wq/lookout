@@ -13,6 +13,8 @@ struct CopilotUsageRecord: Sendable {
     var output: Int64
     var reasoning: Int64
     var requests: Int
+    /// Effort the segment ran at, from the session.start or resume that opened it.
+    var effort: String?
 
     var usage: TokenUsage {
         TokenUsage(uncachedInputTokens: uncached, cachedInputTokens: cached, cacheCreationTokens: cacheWrite, outputTokens: output, reasoningTokens: reasoning)
@@ -33,6 +35,8 @@ struct CopilotFileState: AgentLineScanState {
     var cwd = ""
     var branch = ""
     var model = ""
+    /// Effort of the current segment. Copilot logs it only at session start and resume, not per turn.
+    var effort: String?
     var title = ""
     var startedAt: Date?
     var updatedAt: Date?
@@ -53,6 +57,7 @@ struct CopilotFileState: AgentLineScanState {
         case "session.start", "session.resume":
             if let value = AgentJSON.string(data, ["sessionId"]) { sessionID = value }
             if let value = AgentJSON.string(data, ["selectedModel"]) { model = value }
+            effort = AgentEffort.normalize(AgentJSON.string(data, ["reasoningEffort"]))
             if let context = AgentJSON.object(data, ["context"]) {
                 if let value = AgentJSON.string(context, ["cwd"]) { cwd = value }
                 if let value = AgentJSON.string(context, ["branch"]) { branch = value }
@@ -82,7 +87,8 @@ struct CopilotFileState: AgentLineScanState {
                     cacheWrite: cacheWrite,
                     output: output,
                     reasoning: min(output, max(0, AgentJSON.int64(usage, ["reasoningTokens"]) ?? 0)),
-                    requests: AgentJSON.path(metric, ["requests", "count"]).flatMap { ($0 as? NSNumber)?.intValue } ?? 1
+                    requests: AgentJSON.path(metric, ["requests", "count"]).flatMap { ($0 as? NSNumber)?.intValue } ?? 1,
+                    effort: effort
                 )
                 if record.uncached + cached + cacheWrite + output > 0 { records.append(record) }
             }
@@ -114,9 +120,15 @@ enum AgentCopilotReader {
         }
         guard !files.isEmpty else { return AgentArtifactResult() }
         let outcome = AgentFileScanner.scan(files: files, cache: cache) { _ in CopilotFileState() }
+        var result = aggregate(outcome.states, cutoff: cutoff, now: now)
+        result.warnings.append(contentsOf: AgentArtifactReader.scanWarnings(agent: .copilot, outcome: outcome))
+        return result
+    }
+
+    static func aggregate(_ files: [(file: AgentScannedFile, state: CopilotFileState)], cutoff: Date, now: Date) -> AgentArtifactResult {
         let names = AgentProjectNames()
         var result = AgentArtifactResult()
-        for (file, state) in outcome.states {
+        for (file, state) in files {
             let directory = file.url.deletingLastPathComponent()
             let workspace = file.url.lastPathComponent == "events.jsonl" ? readWorkspace(directory.appendingPathComponent("workspace.yaml")) : [:]
             let sessionID = state.sessionID.isEmpty
@@ -136,7 +148,8 @@ enum AgentCopilotReader {
                     usage: record.usage,
                     reportedCost: nil,
                     requests: record.requests,
-                    sourcePath: file.url.path
+                    sourcePath: file.url.path,
+                    effort: record.effort
                 )
             }
             result.usageEvents.append(contentsOf: events)
@@ -161,10 +174,10 @@ enum AgentCopilotReader {
                 cost: nil,
                 requests: nil
             )
+            session.effort = state.effort
             AgentUsageFactory.apply(events, to: &session)
             result.sessions.append(session)
         }
-        result.warnings.append(contentsOf: AgentArtifactReader.scanWarnings(agent: .copilot, outcome: outcome))
         return result
     }
 

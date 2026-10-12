@@ -34,6 +34,36 @@ public enum AgentParsingSeams {
         return parsed(AgentCodexReader.aggregate(states, cutoff: now.addingTimeInterval(-Double(historyDays) * 86_400), now: now))
     }
 
+    /// Parses in-memory Copilot CLI session logs (`session-state/<id>/events.jsonl`).
+    public static func parseCopilot(_ transcripts: [Transcript], now: Date, historyDays: Int = 90) -> Parsed {
+        let states = transcripts.map { transcript in
+            (
+                file: AgentScannedFile(url: URL(fileURLWithPath: transcript.path), stamp: AgentFileStamp(size: 0, modifiedAt: transcript.modifiedAt, inode: 0)),
+                state: feed(transcript.contents, into: CopilotFileState())
+            )
+        }
+        return parsed(AgentCopilotReader.aggregate(states, cutoff: now.addingTimeInterval(-Double(historyDays) * 86_400), now: now))
+    }
+
+    /// Parses one OpenCode message row (the JSON in `message.data` or `session_message.data`) into its usage event.
+    public static func parseOpenCodeMessage(_ json: String, id: String) -> AgentUsageEvent? {
+        guard let object = AgentJSON.parseObject(json),
+              let record = AgentOpenCodeReader.parseMessage(object, id: id, sessionID: nil, createdMs: nil) else { return nil }
+        return AgentUsageFactory.event(
+            id: "opencode|\(id)",
+            agent: .openCode,
+            sessionID: record.sessionID,
+            projectPath: record.cwd,
+            projectName: "",
+            model: record.model,
+            observedAt: record.timestamp,
+            usage: record.usage,
+            reportedCost: record.reportedCost,
+            sourcePath: "",
+            effort: record.effort
+        )
+    }
+
     /// Parses in-memory Qoder transcripts; tokens are estimated from content.
     public static func parseQoder(_ transcripts: [Transcript], now: Date, historyDays: Int = 90) -> Parsed {
         let states = transcripts.map { ($0.path, $0.modifiedAt, feed($0.contents, into: QoderFileState())) }

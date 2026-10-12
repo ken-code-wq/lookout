@@ -9,6 +9,7 @@ struct CodexUsageRecord: Sendable {
     var cacheWrite: Int64
     var output: Int64
     var reasoning: Int64
+    var effort: String?
 
     var usage: TokenUsage {
         TokenUsage(
@@ -49,6 +50,8 @@ struct CodexFileState: AgentLineScanState {
     var cwd = ""
     var branch = ""
     var model = ""
+    /// Effort of the current turn. Each turn_context sets it, so a token_count takes the effort of its own turn.
+    var effort: String?
     var title = ""
     var startedAt: Date?
     var updatedAt: Date?
@@ -97,6 +100,10 @@ struct CodexFileState: AgentLineScanState {
         case ("turn_context", _):
             if let value = AgentJSON.string(payload, ["model"]) { model = value }
             if cwd.isEmpty, let value = AgentJSON.string(payload, ["cwd"]) { cwd = value }
+            // A turn without a recorded effort is unknown, so it doesn't inherit the previous turn's.
+            effort = AgentEffort.normalize(
+                AgentJSON.string(payload, ["effort"]) ?? (AgentJSON.path(payload, ["collaboration_mode", "settings", "reasoning_effort"]) as? String)
+            )
         case ("event_msg", "token_count"):
             consumeTokenCount(payload, timestamp: timestamp, index: index)
         case ("event_msg", "task_started"):
@@ -168,7 +175,8 @@ struct CodexFileState: AgentLineScanState {
             cached: cached,
             cacheWrite: cacheWrite,
             output: output,
-            reasoning: min(output, reasoning)
+            reasoning: min(output, reasoning),
+            effort: effort
         )
         guard record.uncached + cached + cacheWrite + output > 0 else { return }
         contextTokens = input
@@ -238,7 +246,8 @@ enum AgentCodexReader {
                     observedAt: record.timestamp,
                     usage: record.usage,
                     reportedCost: nil,
-                    sourcePath: file.path
+                    sourcePath: file.path,
+                    effort: record.effort
                 )
             }
             result.usageEvents.append(contentsOf: events)
@@ -266,6 +275,7 @@ enum AgentCodexReader {
                 requests: nil,
                 contextTokens: state.contextTokens
             )
+            session.effort = state.effort
             AgentUsageFactory.apply(events, to: &session)
             result.sessions.append(session)
         }
