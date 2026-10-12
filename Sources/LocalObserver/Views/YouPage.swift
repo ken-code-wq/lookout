@@ -5,14 +5,23 @@ import LocalObserverCore
 /// this view lays it out. Shares are of requests, not tokens, and the labels say so.
 struct YouPage: View {
     @ObservedObject var agentStore: AgentStore
-    @State private var period: ProfilePeriod = .month
+    /// A period to open on, set by a link in (the dashboard's recap). Taken on arrival, then cleared.
+    @Binding var request: ProfilePeriod?
+    @State private var period: ProfilePeriod
     @State private var loaded: Loaded?
     /// Milestones that arrived before or while this page was open, marked "New" until the page is left.
     @State private var freshMilestones: Set<String> = []
     @State private var showingRule = false
+    @State private var showingAllMilestones = false
     @State private var sharing = false
     @State private var width: CGFloat = 900
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(agentStore: AgentStore, request: Binding<ProfilePeriod?>) {
+        _agentStore = ObservedObject(wrappedValue: agentStore)
+        _request = request
+        _period = State(initialValue: request.wrappedValue ?? .month)
+    }
 
     private struct Loaded {
         var profile: PersonalProfile
@@ -65,7 +74,11 @@ struct YouPage: View {
         .scrollIndicators(.never)
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
         .task(id: LoadKey(period: period, revision: agentStore.historyRevision)) { await load() }
-        .onAppear(perform: latchMilestones)
+        .onAppear {
+            takeRequest()
+            latchMilestones()
+        }
+        .onChange(of: request) { _, _ in takeRequest() }
         .onChange(of: agentStore.historyRevision) { _, _ in latchMilestones() }
         .sheet(isPresented: $sharing) {
             ProfileShareSheet(agentStore: agentStore, period: period)
@@ -79,6 +92,13 @@ struct YouPage: View {
         let lifetime = period == .allTime ? profile : await agentStore.profile(for: .allTime)
         guard !Task.isCancelled else { return }
         loaded = Loaded(profile: profile, lifetime: lifetime)
+    }
+
+    /// Takes a period asked for from outside (the dashboard's recap) and clears the request, so a later visit starts fresh.
+    private func takeRequest() {
+        guard let requested = request else { return }
+        period = requested
+        request = nil
     }
 
     /// Acknowledging clears the store's "new" list at once, so the page keeps its own copy to mark them with.
@@ -109,6 +129,10 @@ struct YouPage: View {
             ForEach(Self.periodTabs) { tab in
                 HeaderTab(title: tab.title, symbol: tab.symbol, active: period == tab.period) { period = tab.period }
             }
+            if case .custom = period {
+                // A recap or Wrapped opened from the dashboard: its month or year, selected until another tab is picked.
+                HeaderTab(title: customTitle(period), symbol: "calendar", active: true) {}
+            }
             Spacer(minLength: 12)
             Button { sharing = true } label: {
                 Label("Share", systemImage: "square.and.arrow.up")
@@ -136,8 +160,17 @@ struct YouPage: View {
         case .month: return "This month"
         case .year: return "This year"
         case .allTime: return "All time"
-        default: return "This period"
+        default: return customTitle(period)
         }
+    }
+
+    /// A requested stretch named for the picker: "September", or "2026" for a whole year (with the year added when
+    /// it isn't this one).
+    private func customTitle(_ period: ProfilePeriod) -> String {
+        if let year = ProfileCardFormat.wrappedYear(of: period) { return "\(year)" }
+        guard case .custom(let interval) = period else { return "This period" }
+        let thisYear = Calendar.current.isDate(interval.start, equalTo: .now, toGranularity: .year)
+        return interval.start.formatted(thisYear ? .dateTime.month(.wide) : .dateTime.month(.wide).year())
     }
 
     /// What a trend is compared with, in words: "last month".
@@ -146,6 +179,11 @@ struct YouPage: View {
         case .week: return "last week"
         case .month: return "last month"
         case .year: return "last year"
+        case .custom(let interval):
+            let calendar = Calendar.current
+            if calendar.dateInterval(of: .year, for: interval.start) == interval { return "the year before" }
+            if calendar.dateInterval(of: .month, for: interval.start) == interval { return "the month before" }
+            return nil
         default: return nil
         }
     }
@@ -345,7 +383,7 @@ struct YouPage: View {
                 MixColumn(title: "Effort", rows: effort.levels,
                           empty: "Effort isn't recorded for these requests.",
                           note: effortNote(effort),
-                          label: { effortName($0.title) })
+                          label: { ProfileCardFormat.effort($0.title) })
             }
         }
     }
@@ -357,11 +395,6 @@ struct YouPage: View {
             text += " \(pct(high)) at high or above."
         }
         return text
-    }
-
-    private func effortName(_ level: String) -> String {
-        if level == "xhigh" { return "Extra high" }
-        return level.prefix(1).uppercased() + level.dropFirst()
     }
 
     // MARK: Rhythm
@@ -383,6 +416,8 @@ struct YouPage: View {
 
     private func rhythmCallouts(_ rhythm: ProfileRhythm) -> some View {
         VStack(alignment: .leading, spacing: 6) {
+            Text(workerLine(rhythm)).font(NFont.bodyMedium).foregroundStyle(N.text)
+                .padding(.bottom, 4)
             ForEach(rhythmLines(rhythm)) { line in
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
                     Text(line.label).font(NFont.small).foregroundStyle(N.text2)
@@ -393,7 +428,21 @@ struct YouPage: View {
         }
     }
 
-    /// The plain-language reading of the grid. Night owl or early bird only when one of them is real.
+    /// Which kind of worker the grid says you are. Night owl and early bird use the archetype rules' own thresholds,
+    /// so the page never names a rhythm the archetype doesn't see; the hours are the ones those rules count.
+    private func workerLine(_ rhythm: ProfileRhythm) -> String {
+        let night = ProfileArchetypes.rule(for: .nightShift)?.strength(rhythm.nightShare) != nil
+        let early = ProfileArchetypes.rule(for: .earlyBird)?.strength(rhythm.earlyShare) != nil
+        if night, !early || rhythm.nightShare >= rhythm.earlyShare {
+            return "Night owl · \(pct(rhythm.nightShare)) between 10pm and 4am"
+        }
+        if early {
+            return "Early bird · \(pct(rhythm.earlyShare)) between 5 and 9am"
+        }
+        return "Day worker · \(pct(rhythm.dayShare)) between 9am and 10pm"
+    }
+
+    /// The rest of the plain-language reading of the grid.
     private func rhythmLines(_ rhythm: ProfileRhythm) -> [RhythmLine] {
         var lines: [RhythmLine] = []
         let total = max(rhythm.total, 1)
@@ -404,16 +453,6 @@ struct YouPage: View {
         }
         if let hour = rhythm.peakHour {
             lines.append(RhythmLine(id: "hour", label: "Peak hour", text: clockText(hour)))
-        }
-        if rhythm.nightShare >= rhythm.earlyShare, rhythm.nightShare >= 0.1 {
-            lines.append(RhythmLine(id: "owl", label: "Night owl",
-                                    text: "\(pct(rhythm.nightShare)) of requests between 10 PM and 4 AM"))
-        } else if rhythm.earlyShare >= 0.1 {
-            lines.append(RhythmLine(id: "bird", label: "Early bird",
-                                    text: "\(pct(rhythm.earlyShare)) of requests between 5 and 9 AM"))
-        } else {
-            lines.append(RhythmLine(id: "daytime", label: "Daytime",
-                                    text: "\(pct(rhythm.nightShare)) at night, \(pct(rhythm.earlyShare)) early in the morning"))
         }
         if rhythm.weekendShare > 0 {
             lines.append(RhythmLine(id: "weekend", label: "Weekends", text: "\(pct(rhythm.weekendShare)) of requests"))
@@ -462,8 +501,10 @@ struct YouPage: View {
         }
         if let session = records.longestSession {
             let project = session.project.isEmpty ? "Unknown workspace" : session.project
+            let model = session.model.isEmpty ? nil : AgentFormat.modelDisplayName(session.model)
+            let parts = [session.agent.name, model, project, session.start.formatted(.dateTime.month(.abbreviated).day())]
             items.append(RecordLine(id: "session", label: "Longest session", value: AgentFormat.duration(session.activeSeconds),
-                                    caption: "\(session.agent.name) · \(project) · \(session.start.formatted(.dateTime.month(.abbreviated).day()))"))
+                                    caption: parts.compactMap { $0 }.joined(separator: " · ")))
         }
         if let peak = records.peakConcurrent, peak.sessions > 1 {
             items.append(RecordLine(id: "concurrent", label: "Most agents at once", value: "\(peak.sessions)",
@@ -526,6 +567,7 @@ struct YouPage: View {
             entry.milestone.map { EarnedLine(entry: entry, milestone: $0) }
         }
         let next = nextMilestone(lifetime)
+        let items = milestoneItems(earned)
         return VStack(alignment: .leading, spacing: 0) {
             SectionTitle("Milestones", count: earned.isEmpty ? nil : earned.count)
             if let next {
@@ -535,11 +577,76 @@ struct YouPage: View {
                 Text("Milestones arrive as your history grows.")
                     .font(NFont.small).foregroundStyle(N.text3)
             }
-            ForEach(earned) { line in
-                // Milestones found in history are listed, not celebrated: only ones reached just now get the mark.
-                MilestoneRow(line: line, fresh: freshMilestones.contains(line.id) && !line.entry.isRetroactive)
+            ForEach(items.indices, id: \.self) { index in
+                if isListed(index, items) {
+                    milestoneRow(items[index])
+                }
+            }
+            if items.indices.contains(where: { !isListed($0, items) }) || showingAllMilestones {
+                milestoneDisclosure(earned.count)
             }
         }
+    }
+
+    /// Newest first, with the first-use-of-agent milestones folded into one row where they aren't marked New. The row
+    /// sits where the newest of them falls; a lone one stays a row of its own.
+    private func milestoneItems(_ earned: [EarnedLine]) -> [MilestoneItem] {
+        let folded = earned.filter { $0.milestone.kind == .firstAgent && !isFresh($0) }
+        guard folded.count > 1 else { return earned.map { .single($0) } }
+        let foldedIDs = Set(folded.map(\.id))
+        let group = MilestoneItem.firstSessions(folded.sorted { $0.entry.earnedAt < $1.entry.earnedAt })
+        var items: [MilestoneItem] = []
+        var placed = false
+        for line in earned {
+            guard foldedIDs.contains(line.id) else {
+                items.append(.single(line))
+                continue
+            }
+            if !placed {
+                items.append(group)
+                placed = true
+            }
+        }
+        return items
+    }
+
+    /// The newest few milestones, anything marked New, and everything once the disclosure is open.
+    private func isListed(_ index: Int, _ items: [MilestoneItem]) -> Bool {
+        if showingAllMilestones || index < Self.shownMilestones { return true }
+        if case .single(let line) = items[index] { return isFresh(line) }
+        return false
+    }
+
+    private static let shownMilestones = 4
+
+    /// Milestones found in history are listed, not celebrated: only ones reached just now get the mark.
+    private func isFresh(_ line: EarnedLine) -> Bool {
+        freshMilestones.contains(line.id) && !line.entry.isRetroactive
+    }
+
+    @ViewBuilder private func milestoneRow(_ item: MilestoneItem) -> some View {
+        switch item {
+        case .single(let line): MilestoneRow(line: line, fresh: isFresh(line))
+        case .firstSessions(let lines): FirstSessionsRow(lines: lines)
+        }
+    }
+
+    private func milestoneDisclosure(_ total: Int) -> some View {
+        Button {
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) { showingAllMilestones.toggle() }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .rotationEffect(.degrees(showingAllMilestones ? 90 : 0))
+                Text(showingAllMilestones ? "Show fewer" : "Show all \(total) milestones")
+            }
+            .font(NFont.small)
+            .foregroundStyle(N.text2)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 12)
     }
 
     /// The unearned milestone closest to done, with how far along it is. Counters only; first-agent milestones have
@@ -809,6 +916,53 @@ private struct MilestoneRow: View {
                 Text(line.entry.earnedAt.formatted(.dateTime.month(.abbreviated).day().year()))
                     .font(NFont.small).foregroundStyle(N.text2).monospacedDigit()
                 if line.entry.isRetroactive {
+                    Text("Found in your history").font(NFont.caption).foregroundStyle(N.text3)
+                }
+            }
+        }
+        .padding(.vertical, 9)
+        .overlay(alignment: .bottom) { Rectangle().fill(N.divider).frame(height: 1) }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// One row of the milestones list: a milestone, or the first-session milestones folded into a single row.
+private enum MilestoneItem {
+    case single(EarnedLine)
+    /// Oldest first.
+    case firstSessions([EarnedLine])
+}
+
+/// "First sessions: Claude Code, Codex, …": the first time Lookout saw each agent, as one compact row.
+private struct FirstSessionsRow: View {
+    var lines: [EarnedLine]
+
+    private var names: String { lines.compactMap { $0.milestone.agent?.name }.joined(separator: ", ") }
+
+    private var span: String {
+        guard let first = lines.first?.entry.earnedAt, let last = lines.last?.entry.earnedAt else { return "" }
+        let end = last.formatted(.dateTime.month(.abbreviated).day().year())
+        guard !Calendar.current.isDate(first, inSameDayAs: last) else { return end }
+        return "\(first.formatted(.dateTime.month(.abbreviated).day())) – \(end)"
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "sparkle")
+                .font(.system(size: 13))
+                .foregroundStyle(N.text2)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("First sessions: \(names)")
+                    .font(NFont.bodyMedium).foregroundStyle(N.text)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("The first time Lookout saw each agent at work.").font(NFont.small).foregroundStyle(N.text2)
+            }
+            Spacer(minLength: 12)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(span)
+                    .font(NFont.small).foregroundStyle(N.text2).monospacedDigit()
+                if lines.contains(where: { $0.entry.isRetroactive }) {
                     Text("Found in your history").font(NFont.caption).foregroundStyle(N.text3)
                 }
             }

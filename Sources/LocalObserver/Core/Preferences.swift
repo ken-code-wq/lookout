@@ -324,6 +324,9 @@ final class Preferences: ObservableObject {
     @Published var externalBrightness: Double { didSet { defaults.set(externalBrightness, forKey: Keys.externalBrightness) } }
     @Published var notchHUD: Bool { didSet { defaults.set(notchHUD, forKey: Keys.notchHUD) } }
     @Published var keepAwake: KeepAwakeMode { didSet { defaults.set(keepAwake.rawValue, forKey: Keys.keepAwake) } }
+    /// The dashboard's profile line: a recap or Wrapped when one is ready, otherwise a quiet line about this month.
+    /// Off hides it there; the You page and its milestones are unaffected.
+    @Published var showProfileRecaps: Bool { didSet { defaults.set(showProfileRecaps, forKey: Keys.showProfileRecaps) } }
 
     // Notifications that complement the per-agent ones in AgentSettings.
     @Published var notifyFinished: Bool { didSet { defaults.set(notifyFinished, forKey: Keys.notifyFinished) } }
@@ -395,6 +398,7 @@ final class Preferences: ObservableObject {
         static let notchWidth = "LocalObserver.notchWidth"
         static let externalBrightness = "LocalObserver.externalBrightness"
         static let keepAwake = "LocalObserver.keepAwake"
+        static let showProfileRecaps = "LocalObserver.showProfileRecaps"
     }
 
     private init() {
@@ -455,6 +459,7 @@ final class Preferences: ObservableObject {
         notchWidth = min(max(defaults.object(forKey: Keys.notchWidth) as? Double ?? 1, 0.8), 1.3)
         externalBrightness = min(max(defaults.object(forKey: Keys.externalBrightness) as? Double ?? 1, 0.2), 1)
         keepAwake = KeepAwakeMode(rawValue: defaults.string(forKey: Keys.keepAwake) ?? "") ?? .off
+        showProfileRecaps = defaults.object(forKey: Keys.showProfileRecaps) as? Bool ?? true
         peekHotKey = Self.loadHotKey(defaults, Keys.peekHotKey, default: HotKeyAction.peek.defaultKey)
         menuBarHotKey = Self.loadHotKey(defaults, Keys.menuBarHotKey, default: HotKeyAction.menuBar.defaultKey)
         notchHotKey = Self.loadHotKey(defaults, Keys.notchHotKey, default: HotKeyAction.notch.defaultKey)

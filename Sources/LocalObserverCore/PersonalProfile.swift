@@ -137,6 +137,18 @@ public struct ProfileRhythm: Hashable, Sendable {
     public static let nightHours: Set<Int> = [22, 23, 0, 1, 2, 3]
     /// 05:00 to 08:59.
     public static let earlyHours: Set<Int> = [5, 6, 7, 8]
+    /// 09:00 to 21:59: the hours the night and early windows leave out.
+    public static let dayHours = 9...21
+
+    /// Share of requests between 09:00 and 22:00, on any weekday.
+    public var dayShare: Double {
+        guard total > 0 else { return 0 }
+        var day = 0
+        for row in requests {
+            for hour in Self.dayHours { day += row[hour] }
+        }
+        return Double(day) / Double(total)
+    }
 
     /// The matrix in display order, starting on `firstWeekday` (the user's is `Calendar.current.firstWeekday`).
     public func rows(firstWeekday: Int = Calendar.current.firstWeekday) -> [(weekday: Int, hours: [Int])] {
@@ -326,8 +338,9 @@ public struct PersonalProfile: Hashable, Sendable {
         var modelFirst: [String: String] = [:]
         for (key, day) in history.days {
             for bucket in day.buckets where !bucket.model.isEmpty {
-                if let known = modelFirst[bucket.model], known <= key { continue }
-                modelFirst[bucket.model] = key
+                let name = AgentFormat.modelDisplayName(bucket.model)
+                if let known = modelFirst[name], known <= key { continue }
+                modelFirst[name] = key
             }
         }
         let startKey = WeeklyReport.dayKey(start, calendar: calendar)
@@ -428,7 +441,7 @@ private struct ProfileSlice {
                     group.agents.insert(bucket.agent)
                 }
                 add(&agents[bucket.agent, default: Group()])
-                add(&models[bucket.model, default: Group()])
+                add(&models[AgentFormat.modelDisplayName(bucket.model), default: Group()])
                 add(&projects[bucket.project, default: Group()])
                 if let effort = bucket.effort { add(&efforts[effort, default: Group()]) }
             }

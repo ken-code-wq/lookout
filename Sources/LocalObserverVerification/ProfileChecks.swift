@@ -16,6 +16,7 @@ enum ProfileChecks {
         checkRhythm()
         checkRecords()
         checkTrendsAndFirsts()
+        checkModelNames()
         checkEffort()
         checkArchetypeRules()
         checkArchetypeSelection()
@@ -252,12 +253,29 @@ enum ProfileChecks {
         let this = (12...16).flatMap { day in (0..<6).map { event("t\(day)-\($0)", at(day, 10, $0), session: "t\(day)", model: "claude-opus-4-1") } }
             + [event("codex", at(14, 11), agent: .codex, session: "x", model: "gpt-5")]
         let profile = recorded(last + this, now: at(19)).profile(for: .week, now: at(18, 23), calendar: cal)
-        precondition(profile.trends?.topModel?.from == "claude-sonnet-4-5" && profile.trends?.topModel?.to == "claude-opus-4-1", "Top model shift")
-        precondition(profile.trends?.topModel?.sentence == "Moved from claude-sonnet-4-5 to claude-opus-4-1", "Shift sentence")
+        precondition(profile.trends?.topModel?.from == "Sonnet 4.5" && profile.trends?.topModel?.to == "Opus 4.1", "Top model shift")
+        precondition(profile.trends?.topModel?.sentence == "Moved from Sonnet 4.5 to Opus 4.1", "Shift sentence")
         precondition(profile.trends?.topProvider == nil && abs((profile.trends?.requests ?? 0) - 0.55) < 1e-9, "Provider unchanged; requests up 55%")
-        precondition(profile.firsts.newModels.sorted() == ["claude-opus-4-1", "gpt-5"] && profile.firsts.newProviders == [.codex], "Firsts this period")
+        precondition(profile.firsts.newModels.sorted() == ["GPT-5", "Opus 4.1"] && profile.firsts.newProviders == [.codex], "Firsts this period")
         precondition(profile.firsts.providers.map(\.agent) == [.claude, .codex] && profile.firsts.providers.first?.date == at(5, 10), "First use per agent")
         precondition(profile.models.first?.agent == .claude && abs(profile.models.first!.share - 30.0 / 31) < 1e-9, "Model shares by requests")
+    }
+
+    private static func checkModelNames() {
+        let names: [(raw: String, friendly: String)] = [
+            ("claude-opus-4-1", "Opus 4.1"), ("claude-sonnet-4-5-20250929", "Sonnet 4.5"), ("claude-opus-5-5", "Opus 5.5"),
+            ("claude-haiku-4-5", "Haiku 4.5"), ("claude-haiku-4.5", "Haiku 4.5"), ("claude-3-5-sonnet-20241022", "Sonnet 3.5"),
+            ("anthropic/claude-opus-4-1", "Opus 4.1"), ("gpt-5-codex", "GPT-5 Codex"), ("gpt-5", "GPT-5"),
+            ("gpt-4o-2024-08-06", "GPT-4o"), ("gemini-2.5-pro", "Gemini 2.5 Pro"), ("gemini-3-flash-preview", "Gemini 3 Flash Preview"),
+            ("o3", "o3"), ("o4-mini", "o4 Mini"), ("qoder-auto", "Qoder Auto"), ("MyModel", "MyModel"), ("", ""),
+        ]
+        for name in names {
+            precondition(AgentFormat.modelDisplayName(name.raw) == name.friendly, "Friendly name for \(name.raw)")
+        }
+        // Dated and undated ids of one model are one row, named once.
+        let dated = [event("h1", at(12, 10), model: "claude-haiku-4-5"), event("h2", at(12, 11), model: "claude-haiku-4-5-20251001")]
+        let profile = recorded(dated, now: at(19)).profile(for: .month, now: at(19), calendar: cal)
+        precondition(profile.models.map(\.title) == ["Haiku 4.5"] && profile.models.first?.tally.requests == 2, "Dated variants merge into one model row")
     }
 
     private static func checkEffort() {

@@ -135,6 +135,7 @@ struct LocalObserverVerification {
         RoutingChecks.run()
         WeeklyReportChecks.run()
         ProfileChecks.run()
+        TeaserChecks.run()
         HookChecks.run()
         AutomationChecks.run()
         ServerLogChecks.run()

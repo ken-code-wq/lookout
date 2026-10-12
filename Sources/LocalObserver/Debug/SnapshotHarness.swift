@@ -134,7 +134,11 @@ enum SnapshotHarness {
                 ("activity", AnyView(AgentActivityPage(store: store)), CGSize(width: width, height: 1300)),
                 ("usage", AnyView(AgentUsagePage(store: store)), CGSize(width: width, height: 1400)),
                 ("limits", AnyView(AgentLimitsPage(store: store)), CGSize(width: width, height: 1100)),
-                ("you", AnyView(YouPage(agentStore: store)), CGSize(width: width, height: 2600)),
+                ("you", AnyView(YouPage(agentStore: store, request: .constant(nil))), CGSize(width: width, height: 2600)),
+                // The dashboard's profile line on three days: a recap (days 1 to 5), Wrapped (December), and the quiet line.
+                ("you-teaser-recap", teaser(store, 2026, 10, 3), CGSize(width: width, height: 110)),
+                ("you-teaser-wrapped", teaser(store, 2026, 12, 15), CGSize(width: width, height: 110)),
+                ("you-teaser-default", teaser(store, 2026, 10, 17), CGSize(width: width, height: 110)),
                 ("inspector", AnyView(inspector(store)), CGSize(width: 360, height: 900)),
                 ("settings", AnyView(AgentSettingsView(store: store)), CGSize(width: 820, height: 600)),
                 ("menubar", AnyView(MenuBarView(state: makeState(), agentStore: store)), CGSize(width: 360, height: 1300)),
@@ -537,6 +541,14 @@ enum SnapshotHarness {
                 try? png.write(to: directory.appendingPathComponent("\(shot.name)-\(dark ? "dark" : "light").png"))
             }
         }
+    }
+
+    /// The dashboard's profile line as it reads on a given day, so each variant renders from a fixed date.
+    private static func teaser(_ store: AgentStore, _ year: Int, _ month: Int, _ day: Int) -> AnyView {
+        let date = Calendar.current.date(from: DateComponents(year: year, month: month, day: day, hour: 9)) ?? .now
+        return AnyView(ProfileTeaserCard(agentStore: store, now: date) { _ in }
+            .padding(.horizontal, 32)
+            .padding(.top, 20))
     }
 
     private static func reposPage() -> some View {

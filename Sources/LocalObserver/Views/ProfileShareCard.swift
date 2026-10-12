@@ -158,6 +158,7 @@ struct ProfileCard: View {
                     }
                     rule(18)
                     rhythm(rowHeight: 20, gap: 5)
+                    extras
                 }
                 .frame(width: 400)
             }
@@ -314,6 +315,39 @@ struct ProfileCard: View {
         }
     }
 
+    /// The landscape column's last strip, under the rhythm: the secondary archetype and, when effort is known for at
+    /// least half the requests, the top effort level. Only what the profile can say; nothing is filled in.
+    @ViewBuilder private var extras: some View {
+        let also = profile.archetype.secondary?.archetype.name
+        let effort = profile.effort.coverage >= ProfileArchetypes.effortCoverageNeeded ? profile.effort.levels.first : nil
+        if also != nil || effort != nil {
+            rule(14)
+            HStack(alignment: .top, spacing: 36) {
+                if let also {
+                    detail("Also", also)
+                }
+                if let effort {
+                    detail("Top effort", ProfileCardFormat.effort(effort.title),
+                           caption: "\(ProfileCardFormat.share(effort.share)) of effort-known requests")
+                }
+            }
+        }
+    }
+
+    private func detail(_ label: String, _ value: String, caption: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label.uppercased())
+                .font(.system(size: 12, weight: .semibold)).tracking(0.8).foregroundStyle(palette.text2)
+            Text(value)
+                .font(.system(size: 20, weight: .semibold)).foregroundStyle(palette.text)
+                .lineLimit(1).minimumScaleFactor(0.8)
+            if let caption {
+                Text(caption).font(.system(size: 13)).foregroundStyle(palette.text2)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private var footer: some View {
         HStack(spacing: 0) {
             HStack(spacing: 8) {
@@ -416,6 +450,11 @@ enum ProfileCardFormat {
 
     static func share(_ fraction: Double) -> String { AgentFormat.percent(fraction, digits: 0) }
 
+    /// "xhigh" reads as "Extra high"; the other levels just get a capital.
+    static func effort(_ level: String) -> String {
+        level == "xhigh" ? "Extra high" : level.prefix(1).uppercased() + level.dropFirst()
+    }
+
     /// Agent time for a headline: whole hours once it's past ten, so "242h" stays on one line.
     static func hours(_ seconds: TimeInterval) -> String {
         seconds >= 10 * 3_600 ? "\(Int(seconds / 3_600))h" : WeeklyReportFormat.hours(seconds)
@@ -483,8 +522,7 @@ struct ProfileShareSheet: View {
 
     private func load() async {
         let requested = key
-        let history = agentStore.history
-        let built = await Task.detached(priority: .userInitiated) { history.profile(for: requested.period) }.value
+        let built = await agentStore.profile(for: requested.period)
         guard !Task.isCancelled else { return }
         loaded = (requested, built)
     }

@@ -136,6 +136,8 @@ final class AppState: ObservableObject {
     @Published private(set) var stopping: Set<String> = []
     @Published var searchText = ""
     @Published var sidebar: SidebarItem = .home
+    /// The period the You page should open on, set by a link into it (the dashboard's recap). The page takes it and clears it.
+    @Published var youPeriodRequest: ProfilePeriod?
     @Published var selection: String? = nil
     @Published var toast: Toast? = nil
     @Published var draft: LauncherDraft? = nil
