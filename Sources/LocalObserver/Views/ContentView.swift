@@ -126,6 +126,8 @@ struct ContentView: View {
                 AgentUsagePage(store: agentStore)
             } else if state.sidebar == .agentLimits {
                 AgentLimitsPage(store: agentStore)
+            } else if state.sidebar == .you {
+                YouPage(agentStore: agentStore)
             } else if state.sidebar == .repos {
                 ReposPage(store: repoStore, github: gitHubStore) { slug in
                     gitHubStore.path = [.repo(slug, .code)]
@@ -264,6 +266,7 @@ struct SidebarView: View {
                 row(.agentActivity)
                 row(.agentUsage)
                 row(.agentLimits)
+                row(.you)
             }
             Section("Repos") {
                 row(.repos)

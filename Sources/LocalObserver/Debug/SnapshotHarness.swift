@@ -134,6 +134,7 @@ enum SnapshotHarness {
                 ("activity", AnyView(AgentActivityPage(store: store)), CGSize(width: width, height: 1300)),
                 ("usage", AnyView(AgentUsagePage(store: store)), CGSize(width: width, height: 1400)),
                 ("limits", AnyView(AgentLimitsPage(store: store)), CGSize(width: width, height: 1100)),
+                ("you", AnyView(YouPage(agentStore: store)), CGSize(width: width, height: 2600)),
                 ("inspector", AnyView(inspector(store)), CGSize(width: 360, height: 900)),
                 ("settings", AnyView(AgentSettingsView(store: store)), CGSize(width: 820, height: 600)),
                 ("menubar", AnyView(MenuBarView(state: makeState(), agentStore: store)), CGSize(width: 360, height: 1300)),
@@ -156,6 +157,7 @@ enum SnapshotHarness {
                 ("agent-diff", AnyView(agentDiff(store)), CGSize(width: 1180, height: 1100)),
                 ("weekly", AnyView(WeeklyReportSheet(agentStore: store)), CGSize(width: WeeklyReportCard.width + 48, height: 820)),
                 ("weekly-card", AnyView(weeklyCard(store)), CGSize(width: WeeklyReportCard.width, height: 760)),
+                ("you-share-sheet", AnyView(ProfileShareSheet(agentStore: store, period: .allTime)), CGSize(width: 880, height: 740)),
                 ("settings-disk", AnyView(DiskSettingsPane()), CGSize(width: 620, height: 560)),
                 ("settings-hooks", AnyView(SettingsPage(title: "Agents") { AgentHooksSettings() }), CGSize(width: 620, height: 620)),
                 ("gh-issues", AnyView(GHRepoView(store: GitHubStore.shared, repos: RepoStore.shared, agents: store, slug: "acme/aurora-api", tab: .issues)), CGSize(width: width, height: 700)),
@@ -221,6 +223,7 @@ enum SnapshotHarness {
                 }
             }
             if wanted("weekly-export") { exportWeekly(store, to: directory) }
+            if wanted("you-card") { exportProfileCards(store, to: directory) }
             if wanted("home") {
                 let shelf = await sampleShelf()
                 for dark in [false, true] {
@@ -512,6 +515,27 @@ enum SnapshotHarness {
             guard let tiff = renderer.nsImage?.tiffRepresentation,
                   let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { continue }
             try? png.write(to: directory.appendingPathComponent("weekly-export-\(dark ? "dark" : "light").png"))
+        }
+    }
+
+    /// The profile card through ImageRenderer, the way Copy image and Save draw it: the demo year as landscape and
+    /// portrait, and the calendar year as Wrapped, each in both appearances.
+    private static func exportProfileCards(_ store: AgentStore, to directory: URL) {
+        let year = Calendar.current.component(.year, from: Date())
+        let shots: [(name: String, period: ProfilePeriod, layout: ProfileCardLayout)] = [
+            ("you-card-landscape", .allTime, .landscape),
+            ("you-card-portrait", .allTime, .portrait),
+            ("you-card-wrapped", .calendarYear(year), .portrait),
+        ]
+        for shot in shots {
+            let profile = store.history.profile(for: shot.period)
+            for dark in [false, true] {
+                let renderer = ImageRenderer(content: ProfileCard(profile: profile, layout: shot.layout, dark: dark))
+                renderer.scale = 2
+                guard let tiff = renderer.nsImage?.tiffRepresentation,
+                      let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { continue }
+                try? png.write(to: directory.appendingPathComponent("\(shot.name)-\(dark ? "dark" : "light").png"))
+            }
         }
     }
 

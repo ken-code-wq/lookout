@@ -2,13 +2,14 @@ import Foundation
 
 /// Pages a link, the CLI or a Shortcut can open. Slugs are what people type, so each has a few aliases.
 public enum LookoutPage: String, CaseIterable, Sendable {
-    case dashboard, sessions, usage, limits, repos, github, ci, inbox, pulls, servers, favorites, launchers, containers, cleanup, shelf, clipboard
+    case dashboard, sessions, usage, limits, you, repos, github, ci, inbox, pulls, servers, favorites, launchers, containers, cleanup, shelf, clipboard
 
     public init?(slug: String) {
         let key = slug.lowercased().trimmingCharacters(in: .whitespaces)
         if let page = LookoutPage(rawValue: key) { self = page; return }
         switch key {
         case "home": self = .dashboard
+        case "profile": self = .you
         case "activity", "agents": self = .sessions
         case "repositories": self = .repos
         case "deploys": self = .ci
@@ -26,6 +27,7 @@ public enum LookoutPage: String, CaseIterable, Sendable {
         case .sessions: return "Sessions"
         case .usage: return "Usage"
         case .limits: return "Plan limits"
+        case .you: return "You"
         case .repos: return "Repositories"
         case .github: return "GitHub"
         case .ci: return "CI & Deploys"
