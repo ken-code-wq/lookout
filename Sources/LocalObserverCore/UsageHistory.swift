@@ -28,7 +28,7 @@ public struct UsageHistory: Codable, Hashable, Sendable {
     /// First and last activity folded in. `includingPending()` counts events still settling too.
     public private(set) var firstActivityAt: Date?
     public private(set) var lastActivityAt: Date?
-    /// Days keyed `yyyy-MM-dd` in the calendar they were recorded in.
+    /// Days keyed `yyyy-MM-dd`, Gregorian, in the time zone they were recorded in. See `dayKey`.
     public private(set) var days: [String: Day] = [:]
     /// Sessions keyed `agent|sessionID`.
     public private(set) var sessions: [String: Session] = [:]
@@ -316,7 +316,7 @@ public struct UsageHistory: Codable, Hashable, Sendable {
     public mutating func closeOldDays(now: Date = .now, olderThan age: Int = UsageHistory.rememberIDsDays,
                                       calendar: Calendar = .current) -> Bool {
         guard let edge = calendar.date(byAdding: .day, value: -max(age, 1), to: now) else { return false }
-        let boundary = WeeklyReport.dayKey(edge, calendar: calendar)
+        let boundary = Self.dayKey(edge, calendar: calendar)
         var changed = false
         for agent in backfilledAgents.map(\.rawValue).sorted() where (closedBefore[agent] ?? "") < boundary {
             closedBefore[agent] = boundary
@@ -366,7 +366,9 @@ public struct UsageHistory: Codable, Hashable, Sendable {
         if ledger == nil || replayed {
             changed = closeOldDays(now: now, olderThan: rememberDays, calendar: calendar) || changed
         }
-        if changed { updateMilestones(now: now, calendar: calendar) }
+        // Milestones keep the date they were first recorded with, so wait until every enabled agent's old logs are in:
+        // a half-read history would date them late, or call one reached today that was reached years ago.
+        if changed, scan.enabled.isSubset(of: backfilledAgents) { updateMilestones(now: now, calendar: calendar) }
         return (changed, replayed)
     }
 
@@ -391,7 +393,14 @@ public struct UsageHistory: Codable, Hashable, Sendable {
             summary.closed += 1
             return
         }
-        guard days[slot.day, default: Day()].seen[agent, default: EventIDSet()].insert(EventIDSet.hash(incoming.id)) else {
+        let hash = EventIDSet.hash(incoming.id)
+        // Days are keyed in the time zone of the moment, so after travel an event read again can fall on the day
+        // before or after the one that remembers it.
+        if slot.neighbors.contains(where: { days[$0]?.seen[agent]?.contains(hash) == true }) {
+            summary.repeats += 1
+            return
+        }
+        guard days[slot.day, default: Day()].seen[agent, default: EventIDSet()].insert(hash) else {
             summary.repeats += 1
             return
         }
@@ -415,26 +424,46 @@ public struct UsageHistory: Codable, Hashable, Sendable {
 
     /// Day key and clock hour of a moment, memoized per quarter hour (every time zone offset is a multiple of one).
     struct SlotCache {
-        struct Slot { var day: String; var hour: Int }
+        struct Slot {
+            var day: String
+            var hour: Int
+            /// The days either side, where a time zone change may have put the same moment.
+            var neighbors: [String]
+        }
         let calendar: Calendar
         private var memo: [Int: Slot] = [:]
 
-        init(calendar: Calendar) { self.calendar = calendar }
+        init(calendar: Calendar) { self.calendar = UsageHistory.keyCalendar(calendar) }
 
         mutating func slot(for date: Date) -> Slot {
             let block = Int((date.timeIntervalSince1970 / 900).rounded(.down))
             if let hit = memo[block] { return hit }
-            let slot = Slot(day: WeeklyReport.dayKey(date, calendar: calendar), hour: calendar.component(.hour, from: date))
+            let neighbors = [-1, 1].compactMap { calendar.date(byAdding: .day, value: $0, to: date) }.map { WeeklyReport.dayKey($0, calendar: calendar) }
+            let slot = Slot(day: WeeklyReport.dayKey(date, calendar: calendar), hour: calendar.component(.hour, from: date), neighbors: neighbors)
             memo[block] = slot
             return slot
         }
     }
 
-    /// Start of the day a `yyyy-MM-dd` key names, in `calendar`.
+    /// Keys are Gregorian dates whatever calendar the Mac shows, so a Buddhist or Japanese calendar setting, or a
+    /// change to one, can't renumber the days the history remembers ids under. Only the time zone carries over.
+    static func keyCalendar(_ calendar: Calendar) -> Calendar {
+        guard calendar.identifier != .gregorian else { return calendar }
+        var gregorian = Calendar(identifier: .gregorian)
+        gregorian.timeZone = calendar.timeZone
+        return gregorian
+    }
+
+    /// The `yyyy-MM-dd` key of the day `date` falls on in `calendar`'s time zone.
+    public static func dayKey(_ date: Date, calendar: Calendar = .current) -> String {
+        WeeklyReport.dayKey(date, calendar: keyCalendar(calendar))
+    }
+
+    /// Start of the day a `yyyy-MM-dd` key names, in `calendar`'s time zone.
     public static func date(forDayKey key: String, calendar: Calendar = .current) -> Date? {
         let parts = key.split(separator: "-").compactMap { Int($0) }
         guard parts.count == 3 else { return nil }
-        return calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
+        return keyCalendar(calendar).date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
     }
 
     // MARK: Storage

@@ -10,6 +10,7 @@ enum ProfileChecks {
         checkIdempotentMerge()
         checkPendingAndRevisions()
         checkClosedDays()
+        checkTimeZoneChange()
         checkScanOrdering()
         checkSpans()
         checkPeriodSlicing()
@@ -128,6 +129,29 @@ enum ProfileChecks {
         precondition(codex.folded == 1 && total(history).events == 2, "Closed days stay open to agents not backfilled yet")
     }
 
+    /// Travel, DST and calendar settings move day keys; ids re-read under them must still be repeats.
+    private static func checkTimeZoneChange() {
+        // 23:30 and 00:30 in Paris fall on the next day in Tokyo and the day before in Los Angeles.
+        let events = [event("late", at(5, 23, 30)), event("early", at(6, 0, 30)), event("noon", at(6, 12))]
+        let now = at(12)
+        var history = recorded(events, now: now)
+        let before = total(history)
+        for zone in ["Asia/Tokyo", "America/Los_Angeles", "Pacific/Kiritimati"] {
+            var away = cal
+            away.timeZone = TimeZone(identifier: zone)!
+            let again = history.merge(events, now: now, calendar: away)
+            precondition(again.folded == 0 && again.repeats == 3, "Events re-read in \(zone) must be repeats (folded \(again.folded))")
+        }
+        // A Buddhist calendar in the same zone keys the same Gregorian days.
+        var buddhist = Calendar(identifier: .buddhist)
+        buddhist.timeZone = cal.timeZone
+        let other = history.merge(events, now: now, calendar: buddhist)
+        precondition(other.folded == 0 && total(history) == before, "A different calendar must not renumber the days")
+        precondition(UsageHistory.dayKey(at(6), calendar: buddhist) == "2026-10-06" && history.days.keys.sorted() == ["2026-10-05", "2026-10-06"],
+                     "Day keys are Gregorian")
+        precondition(UsageHistory.date(forDayKey: "2026-10-06", calendar: buddhist) == cal.startOfDay(for: at(6)), "Day keys read back in any calendar")
+    }
+
     private static func checkScanOrdering() {
         let now = at(12)
         // The raw ledger still has a Claude event from 200 days ago whose transcript is gone, and last week's event
@@ -141,6 +165,7 @@ enum ProfileChecks {
         let first = history.absorb(.init(events: scanned, warnings: ["Codex history is still indexing (3 files left)"], enabled: enabled, backfill: enabled),
                                    replaying: ledger, rememberDays: 125, now: now, calendar: cal)
         precondition(first.changed && !first.replayed && history.backfilledAgents == [.claude], "Replay waits for every backfill")
+        precondition(history.milestones.isEmpty, "Milestones wait for every backfill, so they aren't dated off half the history")
         // Backfill done: the ledger replays before old days close, so the deleted transcript's event still lands.
         let second = history.absorb(.init(events: scanned, enabled: enabled, backfill: [.codex]), replaying: ledger, rememberDays: 125, now: now, calendar: cal)
         precondition(second.replayed && total(history).events == 3, "Events whose logs are gone are replayed in")

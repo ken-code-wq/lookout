@@ -324,7 +324,7 @@ struct YouPage: View {
             .buttonStyle(.plain)
             if showingRule {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Rule it passed: \(rule).")
+                    Text("Matched the rule: \(rule).")
                     Text("\(qualified) \(qualified == 1 ? "rule" : "rules") qualified. The strongest leads, and a habit outranks a trait.")
                 }
                 .font(NFont.caption)
@@ -362,11 +362,7 @@ struct YouPage: View {
         return "\(signed(change)) vs \(phrase)"
     }
 
-    private func signed(_ change: Double) -> String {
-        let percent = Int((change * 100).rounded())
-        if percent == 0 { return "0%" }
-        return percent > 0 ? "+\(percent)%" : "−\(abs(percent))%"
-    }
+    private func signed(_ change: Double) -> String { ProfileCardFormat.change(change) }
 
     // MARK: Mix
 
@@ -434,12 +430,12 @@ struct YouPage: View {
         let night = ProfileArchetypes.rule(for: .nightShift)?.strength(rhythm.nightShare) != nil
         let early = ProfileArchetypes.rule(for: .earlyBird)?.strength(rhythm.earlyShare) != nil
         if night, !early || rhythm.nightShare >= rhythm.earlyShare {
-            return "Night owl · \(pct(rhythm.nightShare)) between 10pm and 4am"
+            return "Night owl · \(pct(rhythm.nightShare)) between \(ProfileCardFormat.hour(22)) and \(ProfileCardFormat.hour(4))"
         }
         if early {
-            return "Early bird · \(pct(rhythm.earlyShare)) between 5 and 9am"
+            return "Early bird · \(pct(rhythm.earlyShare)) between \(ProfileCardFormat.hour(5)) and \(ProfileCardFormat.hour(9))"
         }
-        return "Day worker · \(pct(rhythm.dayShare)) between 9am and 10pm"
+        return "Day worker · \(pct(rhythm.dayShare)) between \(ProfileCardFormat.hour(9)) and \(ProfileCardFormat.hour(22))"
     }
 
     /// The rest of the plain-language reading of the grid.

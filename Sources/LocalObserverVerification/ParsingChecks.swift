@@ -198,13 +198,14 @@ enum ParsingChecks {
 
     /// Made-up lines for each agent that records reasoning effort. Nothing here comes from a real transcript.
     static func checkEffort() {
-        precondition(AgentEffort.levels == ["minimal", "low", "medium", "high", "xhigh", "max"], "Effort vocabulary changed")
+        precondition(AgentEffort.levels == ["none", "minimal", "low", "medium", "high", "xhigh", "max"], "Effort vocabulary changed")
         for spelling in ["xhigh", "x-high", "extra_high", "Extra High"] {
             precondition(AgentEffort.normalize(spelling) == "xhigh", "\(spelling) must normalize to xhigh")
         }
         precondition(AgentEffort.normalize("ultrathink") == "max" && AgentEffort.normalize("MAX") == "max", "max spellings")
         precondition(AgentEffort.normalize("Medium") == "medium" && AgentEffort.normalize("minimal") == "minimal", "Plain levels must match case-insensitively")
-        for unknown in ["default", "none", "auto", "16000", "", "turbo"] {
+        precondition(AgentEffort.normalize("none") == "none", "Codex's reasoning-off level is a level")
+        for unknown in ["default", "auto", "16000", "", "turbo", "high2", "low/medium", "max-16k"] {
             precondition(AgentEffort.normalize(unknown) == nil, "\"\(unknown)\" is not an effort level")
         }
         precondition(AgentEffort.normalize(nil) == nil, "Missing effort must stay nil")

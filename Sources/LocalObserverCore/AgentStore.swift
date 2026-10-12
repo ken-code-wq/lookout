@@ -872,13 +872,19 @@ public final class AgentStore: ObservableObject {
         let manager = fileManager
         // Encoding a year of events takes a moment; keep it off the main thread.
         let failure = await Task.detached(priority: .utility) { () -> String? in
+            // Each file on its own: a failed ledger write mustn't hold back the history, which is the only copy.
+            var failure: String?
             do {
                 if let events { try Self.writeLedger(events, to: url, manager: manager) }
-                try history?.write(to: historyURL, fileManager: manager)
-                return nil
             } catch {
-                return "Usage history could not be saved: \(error.localizedDescription)"
+                failure = "Usage history could not be saved: \(error.localizedDescription)"
             }
+            do {
+                try history?.write(to: historyURL, fileManager: manager)
+            } catch {
+                failure = "Usage history could not be saved: \(error.localizedDescription)"
+            }
+            return failure
         }.value
         if let failure { lastError = failure }
     }

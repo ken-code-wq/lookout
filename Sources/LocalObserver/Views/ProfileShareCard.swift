@@ -452,7 +452,11 @@ enum ProfileCardFormat {
 
     /// "xhigh" reads as "Extra high"; the other levels just get a capital.
     static func effort(_ level: String) -> String {
-        level == "xhigh" ? "Extra high" : level.prefix(1).uppercased() + level.dropFirst()
+        switch level {
+        case "xhigh": return "Extra high"
+        case "none": return "Off"
+        default: return level.prefix(1).uppercased() + level.dropFirst()
+        }
     }
 
     /// Agent time for a headline: whole hours once it's past ten, so "242h" stays on one line.
@@ -461,6 +465,14 @@ enum ProfileCardFormat {
     }
 
     static func month(_ date: Date) -> String { date.formatted(.dateTime.month(.abbreviated).year()) }
+
+    /// "+25%", "−8%", or "18×" once growth passes tenfold, where a percentage stops reading as a number.
+    static func change(_ change: Double) -> String {
+        if change >= 9 { return "\(Int((change + 1).rounded()))×" }
+        let percent = Int((change * 100).rounded())
+        if percent == 0 { return "0%" }
+        return percent > 0 ? "+\(percent)%" : "−\(abs(percent))%"
+    }
 
     /// The clock hour in the user's own format: "9:00 PM", "21:00".
     static func hour(_ hour: Int) -> String {
@@ -656,7 +668,8 @@ struct ProfileShareSheet: View {
               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.png]
-        panel.nameFieldStringValue = "Lookout profile - \(ProfileCardFormat.period(profile)).png"
+        let key = profile.period == .allTime ? "all time" : profile.interval.start.formatted(.iso8601.year().month().day())
+        panel.nameFieldStringValue = "Lookout profile \(key).png"
         panel.canCreateDirectories = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {

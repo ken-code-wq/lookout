@@ -314,10 +314,10 @@ public struct PersonalProfile: Hashable, Sendable {
     private static func currentStreak(history: UsageHistory, now: Date, calendar: Calendar) -> Int {
         let active = Set(history.days.filter { $0.value.tally.events > 0 }.keys)
         var cursor = calendar.startOfDay(for: now)
-        if !active.contains(WeeklyReport.dayKey(cursor, calendar: calendar)),
+        if !active.contains(UsageHistory.dayKey(cursor, calendar: calendar)),
            let yesterday = calendar.date(byAdding: .day, value: -1, to: cursor) { cursor = yesterday }
         var count = 0
-        while active.contains(WeeklyReport.dayKey(cursor, calendar: calendar)) {
+        while active.contains(UsageHistory.dayKey(cursor, calendar: calendar)) {
             count += 1
             guard let previous = calendar.date(byAdding: .day, value: -1, to: cursor) else { break }
             cursor = previous
@@ -343,7 +343,7 @@ public struct PersonalProfile: Hashable, Sendable {
                 modelFirst[name] = key
             }
         }
-        let startKey = WeeklyReport.dayKey(start, calendar: calendar)
+        let startKey = UsageHistory.dayKey(start, calendar: calendar)
         firsts.newModels = profile.models.map(\.id).filter { modelFirst[$0].map { $0 >= startKey } ?? false }
         return firsts
     }
@@ -352,7 +352,7 @@ public struct PersonalProfile: Hashable, Sendable {
         let now = current.totals, then = previous.totals
         guard then.tally.events > 0 else { return nil }
         func shift(_ a: [ProfileShare], _ b: [ProfileShare]) -> ProfileShift? {
-            guard let old = b.first, let new = a.first, old.id != new.id else { return nil }
+            guard let old = b.first, let new = a.first, !old.id.isEmpty, !new.id.isEmpty, old.id != new.id else { return nil }
             return ProfileShift(from: old.title, fromShare: old.share, to: new.title, toShare: new.share)
         }
         return ProfileTrends(
@@ -409,8 +409,8 @@ private struct ProfileSlice {
 
     private mutating func readDays(_ history: UsageHistory, _ interval: DateInterval, _ calendar: Calendar) {
         // Keys sort by date: skip far-off days without parsing them (a day's margin for keys from another time zone).
-        let lowest = WeeklyReport.dayKey(interval.start.addingTimeInterval(-86_400), calendar: calendar)
-        let highest = WeeklyReport.dayKey(interval.end.addingTimeInterval(86_400), calendar: calendar)
+        let lowest = UsageHistory.dayKey(interval.start.addingTimeInterval(-86_400), calendar: calendar)
+        let highest = UsageHistory.dayKey(interval.end.addingTimeInterval(86_400), calendar: calendar)
         for (key, day) in history.days where key >= lowest && key <= highest {
             guard let start = UsageHistory.date(forDayKey: key, calendar: calendar),
                   let end = calendar.date(byAdding: .day, value: 1, to: start),

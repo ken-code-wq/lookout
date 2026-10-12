@@ -438,14 +438,17 @@ public struct AgentUsageEvent: Identifiable, Codable, Hashable, Sendable {
 /// so readers pass whatever the log says through `normalize` and keep only what maps cleanly.
 public enum AgentEffort {
     /// Lowest to highest.
-    public static let levels = ["minimal", "low", "medium", "high", "xhigh", "max"]
+    public static let levels = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
     /// Maps a provider's spelling to one of `levels`. Unknown spellings, numeric thinking budgets and
     /// "default" return nil rather than a guessed level.
     public static func normalize(_ raw: String?) -> String? {
-        guard let raw else { return nil }
-        // Case and separators drop out, so "extra_high", "x-high" and "Extra High" all meet at "extrahigh".
+        // Case and separators drop out, so "extra_high", "x-high" and "Extra High" all meet at "extrahigh". Anything
+        // else in the word ("high2", "16000", "low/medium") is a spelling this doesn't know, not one to guess at.
+        guard let raw, raw.allSatisfy({ $0.isLetter || $0 == "-" || $0 == "_" || $0 == " " }) else { return nil }
         switch raw.lowercased().filter(\.isLetter) {
+        // Codex records reasoning turned off as its own level.
+        case "none": return "none"
         case "minimal": return "minimal"
         case "low": return "low"
         case "medium": return "medium"

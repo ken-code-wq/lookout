@@ -15,6 +15,7 @@ struct ProfileTeaserCard: View {
     var open: (ProfilePeriod) -> Void
     @State private var loaded: Loaded?
     @State private var sharing = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private struct Loaded {
         var variant: ProfileTeaser
@@ -143,7 +144,7 @@ struct ProfileTeaserCard: View {
 
     private func dismissButton(_ variant: ProfileTeaser, help: String) -> some View {
         Button {
-            withAnimation(.snappy(duration: 0.2)) { dismissedKey = variant.dismissalKey() ?? "" }
+            withAnimation(reduceMotion ? nil : .snappy(duration: 0.2)) { dismissedKey = variant.dismissalKey() ?? "" }
         } label: {
             Image(systemName: "xmark")
                 .font(.system(size: 10, weight: .semibold))
@@ -161,7 +162,7 @@ struct ProfileTeaserCard: View {
         guard let change = profile.trends?.requests else { return requests }
         let percent = Int((change * 100).rounded())
         guard percent != 0 else { return requests }
-        return "\(requests) · \(percent > 0 ? "+\(percent)%" : "−\(abs(percent))%") vs \(against)"
+        return "\(requests) · \(ProfileCardFormat.change(change)) vs \(against)"
     }
 
     /// "You're The Conductor", or "You're in Night Shift" where the name has no article.
